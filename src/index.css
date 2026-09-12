@@ -1,0 +1,4 @@
+@import "tailwindcss";
+
+/* Opt out of the prefers-color-scheme default so the theme can be toggled manually. */
+@custom-variant dark (&:where(.dark, .dark *));
