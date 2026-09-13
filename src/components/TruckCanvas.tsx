@@ -211,7 +211,7 @@ function TruckShell({
 
   return (
     <group>
-      <mesh position={[0, height / 2, 0]} onClick={clickEmpty}>
+      <mesh position={[0, height / 2, 0]} scale={1.001} onClick={clickEmpty}>
         <boxGeometry args={[width, height, length]} />
         <meshBasicMaterial
           color={palette.bed}
@@ -220,7 +220,15 @@ function TruckShell({
           side={BackSide}
           depthWrite={false}
         />
-        <Edges color={palette.edge} lineWidth={1.4} />
+        <Edges color={palette.edge} lineWidth={1.4} renderOrder={10}>
+          <lineBasicMaterial
+            color={palette.edge}
+            polygonOffset
+            polygonOffsetFactor={-2}
+            polygonOffsetUnits={-2}
+            depthWrite={false}
+          />
+        </Edges>
       </mesh>
 
       <mesh position={[0, 0.002, 0]} rotation={[-Math.PI / 2, 0, 0]} onClick={clickEmpty}>
@@ -256,7 +264,15 @@ function TruckShell({
       <mesh position={[0, height / 2, rearZ + 0.008]}>
         <planeGeometry args={[width, height]} />
         <meshBasicMaterial transparent opacity={0} depthWrite={false} side={DoubleSide} />
-        <Edges color={palette.rearFrame} lineWidth={2.4} />
+        <Edges color={palette.rearFrame} lineWidth={2.4} renderOrder={10}>
+          <lineBasicMaterial
+            color={palette.rearFrame}
+            polygonOffset
+            polygonOffsetFactor={-2}
+            polygonOffsetUnits={-2}
+            depthWrite={false}
+          />
+        </Edges>
       </mesh>
 
       {/* Centred above the front roof edge, clear of every wireframe line. */}
@@ -345,7 +361,7 @@ function PalletMesh({
             metalness={0}
             transparent
             opacity={highlighted ? 0.92 : 0.85}
-            depthWrite
+            depthWrite={false}
             polygonOffset
             polygonOffsetFactor={-1}
             polygonOffsetUnits={-1}
@@ -392,7 +408,39 @@ function PalletMesh({
   );
 }
 
-function HudRow({ label, value }: { label: string; value: string }) {
+function AxisPrefix({ children }: { children: string }) {
+  return <span className="mr-1.5 inline-block font-normal text-slate-400">{children}</span>;
+}
+
+function AxisMeasure({
+  length,
+  width,
+  height,
+}: {
+  length: number;
+  width: number;
+  height?: number;
+}) {
+  return (
+    <span>
+      <AxisPrefix>d</AxisPrefix>
+      <span className="font-semibold text-slate-700 dark:text-slate-200">{length}</span>
+      <span className="mx-1.5 font-normal text-slate-400">×</span>
+      <AxisPrefix>š</AxisPrefix>
+      <span className="font-semibold text-slate-700 dark:text-slate-200">{width}</span>
+      {height !== undefined ? (
+        <>
+          <span className="mx-1.5 font-normal text-slate-400">×</span>
+          <AxisPrefix>v</AxisPrefix>
+          <span className="font-semibold text-slate-700 dark:text-slate-200">{height}</span>
+        </>
+      ) : null}
+      <span className="font-normal text-slate-400"> mm</span>
+    </span>
+  );
+}
+
+function HudRow({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="flex items-baseline justify-between gap-6">
       <dt className="text-[10px] tracking-wide text-slate-400 uppercase dark:text-slate-500">
@@ -437,9 +485,14 @@ function PalletHud({
         <dl className="mt-2 space-y-1">
           <HudRow
             label="Rozměry"
-            value={`${item.width} × ${item.length} × ${item.height} mm`}
+            value={
+              <AxisMeasure length={item.length} width={item.width} height={item.height} />
+            }
           />
-          <HudRow label="Paleta" value={`${item.palletWidth} × ${item.palletLength} mm`} />
+          <HudRow
+            label="Paleta"
+            value={<AxisMeasure length={item.palletLength} width={item.palletWidth} />}
+          />
           <HudRow label="Rotace" value={`${item.rotation}°`} />
           <HudRow
             label="Poloha"

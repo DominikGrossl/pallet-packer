@@ -469,19 +469,19 @@ export default function PackingDashboard() {
               />
               <div className="grid grid-cols-3 gap-2">
                 <NumberField
-                  label="Šířka"
-                  value={truckWidth}
+                  label="Délka"
+                  value={truckLength}
                   onChange={(value) => {
-                    setTruckWidth(value);
+                    setTruckLength(value);
                     setResult(null);
                   }}
                   disabled={!customTruck}
                 />
                 <NumberField
-                  label="Délka"
-                  value={truckLength}
+                  label="Šířka"
+                  value={truckWidth}
                   onChange={(value) => {
-                    setTruckLength(value);
+                    setTruckWidth(value);
                     setResult(null);
                   }}
                   disabled={!customTruck}
@@ -521,20 +521,12 @@ export default function PackingDashboard() {
                     >
                       {pallets.map((pallet) => (
                         <option key={pallet.id} value={pallet.id}>
-                          {pallet.name} ({pallet.width} × {pallet.length})
+                          {pallet.name} ({pallet.length} × {pallet.width})
                         </option>
                       ))}
                       <option value="custom">Vlastní paleta</option>
                     </select>
                   </label>
-                  <NumberField
-                    label="Šířka palety"
-                    value={palletWidth}
-                    onChange={(value) => {
-                      setPalletWidth(value);
-                      setSelectedPalletId("custom");
-                    }}
-                  />
                   <NumberField
                     label="Délka palety"
                     value={palletLength}
@@ -543,10 +535,18 @@ export default function PackingDashboard() {
                       setSelectedPalletId("custom");
                     }}
                   />
+                  <NumberField
+                    label="Šířka palety"
+                    value={palletWidth}
+                    onChange={(value) => {
+                      setPalletWidth(value);
+                      setSelectedPalletId("custom");
+                    }}
+                  />
                 </div>
                 <div className="grid grid-cols-3 gap-3">
-                  <NumberField label="Šířka nákladu" value={cargoWidth} onChange={setCargoWidth} />
                   <NumberField label="Délka nákladu" value={cargoLength} onChange={setCargoLength} />
+                  <NumberField label="Šířka nákladu" value={cargoWidth} onChange={setCargoWidth} />
                   <NumberField label="Výška nákladu" value={cargoHeight} onChange={setCargoHeight} />
                 </div>
               </div>
@@ -606,12 +606,21 @@ export default function PackingDashboard() {
                     key={entry.id}
                     className={clsx(panelClass, "flex items-start justify-between gap-3 px-3 py-2.5")}
                   >
-                    <div>
+                    <div className="min-w-0">
                       <p className="text-sm font-medium">{entry.name}</p>
-                      <p className="text-xs text-slate-500 dark:text-slate-400">
-                        Paleta {entry.palletWidth}×{entry.palletLength} · Náklad{" "}
-                        {entry.cargoWidth}×{entry.cargoLength}×{entry.height} mm
-                      </p>
+                      <div className="my-1.5 space-y-1">
+                        <ManifestDimRow
+                          label="Paleta"
+                          length={entry.palletLength}
+                          width={entry.palletWidth}
+                        />
+                        <ManifestDimRow
+                          label="Náklad"
+                          length={entry.cargoLength}
+                          width={entry.cargoWidth}
+                          height={entry.height}
+                        />
+                      </div>
                       <p className={clsx("mt-1 text-xs", mutedClass)}>
                         Počet {entry.quantity}
                         {entry.stackable ? " · Stohovatelné" : " · Nestohovatelné"}
@@ -744,6 +753,59 @@ export default function PackingDashboard() {
           event.target.value = "";
         }}
       />
+    </div>
+  );
+}
+
+function AxisPrefix({ children }: { children: string }) {
+  return <span className="mr-1.5 inline-block font-normal text-slate-500">{children}</span>;
+}
+
+function AxisMeasure({
+  length,
+  width,
+  height,
+}: {
+  length: number;
+  width: number;
+  height?: number;
+}) {
+  return (
+    <span className="whitespace-nowrap">
+      <AxisPrefix>d</AxisPrefix>
+      <span className="font-semibold text-slate-800 dark:text-slate-100">{length}</span>
+      <span className="mx-1.5 font-normal text-slate-500">×</span>
+      <AxisPrefix>š</AxisPrefix>
+      <span className="font-semibold text-slate-800 dark:text-slate-100">{width}</span>
+      {height !== undefined ? (
+        <>
+          <span className="mx-1.5 font-normal text-slate-500">×</span>
+          <AxisPrefix>v</AxisPrefix>
+          <span className="font-semibold text-slate-800 dark:text-slate-100">{height}</span>
+        </>
+      ) : null}
+      <span className="ml-1 text-[11px] font-normal text-slate-400">mm</span>
+    </span>
+  );
+}
+
+function ManifestDimRow({
+  label,
+  length,
+  width,
+  height,
+}: {
+  label: string;
+  length: number;
+  width: number;
+  height?: number;
+}) {
+  return (
+    <div className="flex items-center gap-2 text-xs">
+      <span className="w-16 shrink-0 text-[11px] font-semibold tracking-wider text-slate-400 uppercase dark:text-slate-400">
+        {label}
+      </span>
+      <AxisMeasure length={length} width={width} height={height} />
     </div>
   );
 }
@@ -907,14 +969,14 @@ function SettingsModal({
                   </label>
                   <div className="grid grid-cols-3 gap-2">
                     <NumberField
-                      label="Šířka"
-                      value={draft.innerWidth}
-                      onChange={(innerWidth) => setDraft({ ...draft, innerWidth })}
-                    />
-                    <NumberField
                       label="Délka"
                       value={draft.innerLength}
                       onChange={(innerLength) => setDraft({ ...draft, innerLength })}
+                    />
+                    <NumberField
+                      label="Šířka"
+                      value={draft.innerWidth}
+                      onChange={(innerWidth) => setDraft({ ...draft, innerWidth })}
                     />
                     <NumberField
                       label="Výška"
@@ -925,7 +987,7 @@ function SettingsModal({
                 </>
               )}
               summary={(item) =>
-                `${item.innerWidth} × ${item.innerLength} × ${item.innerHeight} mm`
+                `${item.innerLength} × ${item.innerWidth} × ${item.innerHeight} mm`
               }
             />
           ) : (
@@ -952,19 +1014,19 @@ function SettingsModal({
                   </label>
                   <div className="grid grid-cols-2 gap-2">
                     <NumberField
-                      label="Šířka"
-                      value={draft.width}
-                      onChange={(width) => setDraft({ ...draft, width })}
-                    />
-                    <NumberField
                       label="Délka"
                       value={draft.length}
                       onChange={(length) => setDraft({ ...draft, length })}
                     />
+                    <NumberField
+                      label="Šířka"
+                      value={draft.width}
+                      onChange={(width) => setDraft({ ...draft, width })}
+                    />
                   </div>
                 </>
               )}
-              summary={(item) => `${item.width} × ${item.length} mm`}
+              summary={(item) => `${item.length} × ${item.width} mm`}
             />
           )}
         </div>

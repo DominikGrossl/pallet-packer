@@ -187,129 +187,102 @@ function occupyFreeRects(freeRects: FreeRect[], placed: FreeRect): FreeRect[] {
   return pruneFreeRects(split);
 }
 
-function copiesFit(rect: FreeRect, orientation: Orientation): number {
-  return (
-    Math.floor(rect.width / orientation.width) * Math.floor(rect.length / orientation.length)
-  );
+interface PlacementCandidate {
+  kind: "floor" | "stack";
+  rectIndex: number;
+  slotIndex: number;
+  orientation: Orientation;
+  x: number;
+  y: number;
+  z: number;
+  leftoverArea: number;
 }
 
-function findFloorPlacement(
-  freeRects: FreeRect[],
+function orientationsFor(
   item: NormalizedItem,
   allowedRotations: ReadonlySet<0 | 90>,
-): { rectIndex: number; orientation: Orientation } | null {
-  const orientations = orientationsOf(item.effectiveWidth, item.effectiveLength).filter((o) =>
-    allowedRotations.has(o.rotation),
-  );
-  const candidates =
-    orientations.length > 0
-      ? orientations
-      : orientationsOf(item.effectiveWidth, item.effectiveLength);
-
-  let best: {
-    rectIndex: number;
-    orientation: Orientation;
-    fitCount: number;
-    z: number;
-    x: number;
-    leftoverArea: number;
-    shortLeftover: number;
-  } | null = null;
-
-  for (let i = 0; i < freeRects.length; i++) {
-    const rect = freeRects[i];
-    for (const orientation of candidates) {
-      if (orientation.width > rect.width || orientation.length > rect.length) continue;
-
-      const leftoverArea = rect.width * rect.length - orientation.width * orientation.length;
-      const shortLeftover = Math.min(
-        rect.width - orientation.width,
-        rect.length - orientation.length,
-      );
-      const candidate = {
-        rectIndex: i,
-        orientation,
-        fitCount: copiesFit(rect, orientation),
-        z: rect.z,
-        x: rect.x,
-        leftoverArea,
-        shortLeftover,
-      };
-
-      if (
-        !best ||
-        candidate.fitCount > best.fitCount ||
-        (candidate.fitCount === best.fitCount && candidate.z < best.z) ||
-        (candidate.fitCount === best.fitCount &&
-          candidate.z === best.z &&
-          candidate.x < best.x) ||
-        (candidate.fitCount === best.fitCount &&
-          candidate.z === best.z &&
-          candidate.x === best.x &&
-          candidate.leftoverArea < best.leftoverArea) ||
-        (candidate.fitCount === best.fitCount &&
-          candidate.z === best.z &&
-          candidate.x === best.x &&
-          candidate.leftoverArea === best.leftoverArea &&
-          candidate.shortLeftover < best.shortLeftover)
-      ) {
-        best = candidate;
-      }
-    }
-  }
-
-  return best ? { rectIndex: best.rectIndex, orientation: best.orientation } : null;
+): Orientation[] {
+  const all = orientationsOf(item.effectiveWidth, item.effectiveLength);
+  const filtered = all.filter((orientation) => allowedRotations.has(orientation.rotation));
+  return filtered.length > 0 ? filtered : all;
 }
 
-function findStackPlacement(
-  slots: StackSlot[],
+/** Cabin first (`z`), then the current bay (`x` then `y`), then the tighter leftover. */
+function isBetterCandidate(candidate: PlacementCandidate, best: PlacementCandidate): boolean {
+  if (candidate.z !== best.z) return candidate.z < best.z;
+  if (candidate.x !== best.x) return candidate.x < best.x;
+  if (candidate.y !== best.y) return candidate.y < best.y;
+  if (candidate.leftoverArea !== best.leftoverArea) return candidate.leftoverArea < best.leftoverArea;
+  return candidate.orientation.rotation < best.orientation.rotation;
+}
+
+function findBestPlacement(
+  truck: TruckSpec,
+  placed: PlacedItem[],
+  freeRects: FreeRect[],
+  stackSlots: StackSlot[],
   item: NormalizedItem,
-  truckHeight: number,
-): { slotIndex: number; orientation: Orientation } | null {
-  let best: {
-    slotIndex: number;
-    orientation: Orientation;
-    leftoverArea: number;
-    y: number;
-    z: number;
-    x: number;
-  } | null = null;
+  allowedRotations: ReadonlySet<0 | 90>,
+): PlacementCandidate | null {
+  const orientations = orientationsFor(item, allowedRotations);
+  let best: PlacementCandidate | null = null;
 
-  for (let i = 0; i < slots.length; i++) {
-    const slot = slots[i];
-    if (slot.y + occupyHeight(item.height) > truckHeight) continue;
+  const consider = (candidate: PlacementCandidate) => {
+    if (
+      !canOccupy(
+        truck,
+        placed,
+        candidate.x,
+        candidate.y,
+        candidate.z,
+        candidate.orientation.width,
+        candidate.orientation.length,
+        item.height,
+      )
+    ) {
+      return;
+    }
+    if (!best || isBetterCandidate(candidate, best)) best = candidate;
+  };
 
-    for (const orientation of orientationsOf(item.effectiveWidth, item.effectiveLength)) {
-      if (orientation.width > slot.width || orientation.length > slot.length) continue;
-
-      const leftoverArea = slot.width * slot.length - orientation.width * orientation.length;
-      const candidate = {
-        slotIndex: i,
+  for (let rectIndex = 0; rectIndex < freeRects.length; rectIndex++) {
+    const rect = freeRects[rectIndex];
+    for (const orientation of orientations) {
+      if (orientation.width > rect.width || orientation.length > rect.length) continue;
+      consider({
+        kind: "floor",
+        rectIndex,
+        slotIndex: -1,
         orientation,
-        leftoverArea,
-        y: slot.y,
-        z: slot.z,
-        x: slot.x,
-      };
+        x: rect.x,
+        y: 0,
+        z: rect.z,
+        leftoverArea: rect.width * rect.length - orientation.width * orientation.length,
+      });
+    }
+  }
 
-      if (
-        !best ||
-        candidate.leftoverArea < best.leftoverArea ||
-        (candidate.leftoverArea === best.leftoverArea && candidate.y < best.y) ||
-        (candidate.leftoverArea === best.leftoverArea &&
-          candidate.y === best.y &&
-          candidate.z < best.z) ||
-        (candidate.leftoverArea === best.leftoverArea &&
-          candidate.y === best.y &&
-          candidate.z === best.z &&
-          candidate.x < best.x)
-      ) {
-        best = candidate;
+  if (item.source.stackable) {
+    for (let slotIndex = 0; slotIndex < stackSlots.length; slotIndex++) {
+      const slot = stackSlots[slotIndex];
+      if (slot.y + occupyHeight(item.height) > truck.innerHeight) continue;
+      for (const orientation of orientations) {
+        if (orientation.width > slot.width || orientation.length > slot.length) continue;
+        consider({
+          kind: "stack",
+          rectIndex: -1,
+          slotIndex,
+          orientation,
+          x: slot.x,
+          y: slot.y,
+          z: slot.z,
+          leftoverArea: slot.width * slot.length - orientation.width * orientation.length,
+        });
       }
     }
   }
 
-  return best ? { slotIndex: best.slotIndex, orientation: best.orientation } : null;
+  return best;
 }
 
 function wouldExceedWeight(
@@ -455,50 +428,52 @@ function packAttempt(
   const stackSlots: StackSlot[] = [];
   const preferred: ReadonlySet<0 | 90> = new Set([preferredRotation]);
 
-  const placeOnFloor = (
+  const placeItem = (
     item: NormalizedItem,
     allowedRotations: ReadonlySet<0 | 90>,
   ): boolean => {
     if (wouldExceedWeight(truck, totalWeight, item.weight)) return false;
-    const floorFit = findFloorPlacement(freeRects, item, allowedRotations);
-    if (!floorFit) return false;
+    const fit = findBestPlacement(
+      truck,
+      placed,
+      freeRects,
+      stackSlots,
+      item,
+      allowedRotations,
+    );
+    if (!fit) return false;
 
-    const rect = freeRects[floorFit.rectIndex];
-    const { orientation } = floorFit;
-    if (
-      !canOccupy(
-        truck,
-        placed,
-        rect.x,
-        0,
-        rect.z,
-        orientation.width,
-        orientation.length,
-        item.height,
-      )
-    ) {
-      return false;
-    }
-
-    placed.push(toPlaced(item, rect.x, 0, rect.z, orientation));
+    const { orientation, x, y, z } = fit;
+    placed.push(toPlaced(item, x, y, z, orientation));
     totalWeight += item.weight;
 
-    if (item.source.stackable) {
-      stackSlots.push({
-        x: rect.x,
-        y: occupyHeight(item.height),
-        z: rect.z,
+    if (fit.kind === "floor") {
+      if (item.source.stackable) {
+        stackSlots.push({
+          x,
+          y: occupyHeight(item.height),
+          z,
+          width: orientation.width,
+          length: orientation.length,
+        });
+      }
+      freeRects = occupyFreeRects(freeRects, {
+        x,
+        z,
         width: orientation.width,
         length: orientation.length,
       });
+      return true;
     }
 
-    freeRects = occupyFreeRects(freeRects, {
-      x: rect.x,
-      z: rect.z,
+    const slot = stackSlots[fit.slotIndex];
+    stackSlots[fit.slotIndex] = {
+      x,
+      y: slot.y + occupyHeight(item.height),
+      z,
       width: orientation.width,
       length: orientation.length,
-    });
+    };
     return true;
   };
 
@@ -513,58 +488,11 @@ function packAttempt(
       unplaced.push(item.source);
       continue;
     }
-    if (!placeOnFloor(item, preferred)) leftover.push(item);
+    if (!placeItem(item, preferred)) leftover.push(item);
   }
 
-  const stillOpen: NormalizedItem[] = [];
   for (const item of leftover) {
-    if (!placeOnFloor(item, BOTH_ROTATIONS)) stillOpen.push(item);
-  }
-
-  for (const item of stillOpen) {
-    if (!item.source.stackable) {
-      unplaced.push(item.source);
-      continue;
-    }
-    if (wouldExceedWeight(truck, totalWeight, item.weight)) {
-      unplaced.push(item.source);
-      continue;
-    }
-
-    const stackFit = findStackPlacement(stackSlots, item, truck.innerHeight);
-    if (!stackFit) {
-      unplaced.push(item.source);
-      continue;
-    }
-
-    const slot = stackSlots[stackFit.slotIndex];
-    const { orientation } = stackFit;
-    if (
-      !canOccupy(
-        truck,
-        placed,
-        slot.x,
-        slot.y,
-        slot.z,
-        orientation.width,
-        orientation.length,
-        item.height,
-      )
-    ) {
-      unplaced.push(item.source);
-      continue;
-    }
-
-    placed.push(toPlaced(item, slot.x, slot.y, slot.z, orientation));
-    totalWeight += item.weight;
-
-    stackSlots[stackFit.slotIndex] = {
-      x: slot.x,
-      y: slot.y + occupyHeight(item.height),
-      z: slot.z,
-      width: orientation.width,
-      length: orientation.length,
-    };
+    if (!placeItem(item, BOTH_ROTATIONS)) unplaced.push(item.source);
   }
 
   return finalizeResult(truck, placed, unplaced, totalWeight);
