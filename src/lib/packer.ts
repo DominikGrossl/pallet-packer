@@ -584,6 +584,211 @@ export function packTruck(truck: TruckSpec, items: CargoItem[]): PackingResult {
     : rotated;
 }
 
+/** Manual inspector nudge along the truck bed, in millimetres. */
+export const NUDGE_STEP_MM = 50;
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function othersOf(placed: PlacedItem[], id: string): PlacedItem[] {
+  return placed.filter((item) => item.id !== id);
+}
+
+function candidateFits(
+  truck: TruckSpec,
+  others: PlacedItem[],
+  x: number,
+  y: number,
+  z: number,
+  width: number,
+  length: number,
+  cargoHeight: number,
+): boolean {
+  const height = occupyHeight(cargoHeight);
+  if (width > truck.innerWidth || length > truck.innerLength) return false;
+  return (
+    withinTruck(truck, x, y, z, width, length, height) &&
+    !hasVolumeOverlap(others, x, y, z, width, length, height)
+  );
+}
+
+function replaceItem(placed: PlacedItem[], id: string, next: PlacedItem): PlacedItem[] {
+  return placed.map((item) => (item.id === id ? next : item));
+}
+
+function clampToTruck(
+  truck: TruckSpec,
+  x: number,
+  y: number,
+  z: number,
+  width: number,
+  length: number,
+  cargoHeight: number,
+): { x: number; y: number; z: number } | null {
+  const height = occupyHeight(cargoHeight);
+  if (width > truck.innerWidth || length > truck.innerLength) return null;
+  if (height > truck.innerHeight) return null;
+  return {
+    x: clamp(x, 0, truck.innerWidth - width),
+    y: clamp(y, 0, truck.innerHeight - height),
+    z: clamp(z, 0, truck.innerLength - length),
+  };
+}
+
+/** Rebuild stats after a manual move so the dashboard does not run a full repack. */
+export function updatePlacedItems(
+  truck: TruckSpec,
+  result: PackingResult,
+  placed: PlacedItem[],
+): PackingResult {
+  return finalizeResult(truck, placed, result.unplaced, result.totalWeight);
+}
+
+/**
+ * Translate one unit. Out-of-bed positions are clamped to the walls; overlaps are rejected.
+ * `x` is truck width (left/right), `z` is truck length (cab → rear doors).
+ */
+export function tryNudgePlacedItem(
+  truck: TruckSpec,
+  placed: PlacedItem[],
+  id: string,
+  delta: { dx?: number; dy?: number; dz?: number },
+): PlacedItem[] | null {
+  const item = placed.find((entry) => entry.id === id);
+  if (!item) return null;
+
+  const clamped = clampToTruck(
+    truck,
+    item.x + (delta.dx ?? 0),
+    item.y + (delta.dy ?? 0),
+    item.z + (delta.dz ?? 0),
+    item.width,
+    item.length,
+    item.height,
+  );
+  if (!clamped) return null;
+  if (clamped.x === item.x && clamped.y === item.y && clamped.z === item.z) return null;
+
+  const others = othersOf(placed, id);
+  if (
+    !candidateFits(
+      truck,
+      others,
+      clamped.x,
+      clamped.y,
+      clamped.z,
+      item.width,
+      item.length,
+      item.height,
+    )
+  ) {
+    return null;
+  }
+
+  return replaceItem(placed, id, { ...item, ...clamped });
+}
+
+/** Swap the 0°/90° footprint around the unit's floor centre, then clamp and reject overlaps. */
+export function tryRotatePlacedItem(
+  truck: TruckSpec,
+  placed: PlacedItem[],
+  id: string,
+): PlacedItem[] | null {
+  const item = placed.find((entry) => entry.id === id);
+  if (!item) return null;
+
+  const width = item.length;
+  const length = item.width;
+  const palletWidth = item.palletLength;
+  const palletLength = item.palletWidth;
+  const rotation: 0 | 90 = item.rotation === 0 ? 90 : 0;
+  const centerX = item.x + item.width / 2;
+  const centerZ = item.z + item.length / 2;
+  const clamped = clampToTruck(
+    truck,
+    Math.round(centerX - width / 2),
+    item.y,
+    Math.round(centerZ - length / 2),
+    width,
+    length,
+    item.height,
+  );
+  if (!clamped) return null;
+
+  const others = othersOf(placed, id);
+  if (!candidateFits(truck, others, clamped.x, clamped.y, clamped.z, width, length, item.height)) {
+    return null;
+  }
+
+  return replaceItem(placed, id, {
+    ...item,
+    ...clamped,
+    width,
+    length,
+    palletWidth,
+    palletLength,
+    rotation,
+  });
+}
+
+function findStackSupport(
+  truck: TruckSpec,
+  item: PlacedItem,
+  others: PlacedItem[],
+): { x: number; y: number; z: number } | null {
+  const itemCenterX = item.x + item.width / 2;
+  const itemCenterZ = item.z + item.length / 2;
+  let best: { x: number; y: number; z: number; score: number } | null = null;
+
+  for (const other of others) {
+    if (item.width > other.width || item.length > other.length) continue;
+    const y = other.y + occupyHeight(other.height);
+    const contained =
+      item.x >= other.x &&
+      item.z >= other.z &&
+      item.x + item.width <= other.x + other.width &&
+      item.z + item.length <= other.z + other.length;
+    const x = contained ? item.x : Math.round(other.x + (other.width - item.width) / 2);
+    const z = contained ? item.z : Math.round(other.z + (other.length - item.length) / 2);
+    if (!candidateFits(truck, others, x, y, z, item.width, item.length, item.height)) continue;
+
+    const otherCenterX = other.x + other.width / 2;
+    const otherCenterZ = other.z + other.length / 2;
+    const dist =
+      (itemCenterX - otherCenterX) ** 2 + (itemCenterZ - otherCenterZ) ** 2;
+    const score = (contained ? 0 : 1_000_000_000) + dist;
+    if (!best || score < best.score) best = { x, y, z, score };
+  }
+
+  return best;
+}
+
+/** Drop a stacked unit to the floor, or lift a floor unit onto the nearest valid support. */
+export function tryTogglePlacedElevation(
+  truck: TruckSpec,
+  placed: PlacedItem[],
+  id: string,
+): PlacedItem[] | null {
+  const item = placed.find((entry) => entry.id === id);
+  if (!item) return null;
+
+  const others = othersOf(placed, id);
+
+  if (item.y > 0) {
+    const clamped = clampToTruck(truck, item.x, 0, item.z, item.width, item.length, item.height);
+    if (!clamped) return null;
+    if (!candidateFits(truck, others, clamped.x, 0, clamped.z, item.width, item.length, item.height)) {
+      return null;
+    }
+    return replaceItem(placed, id, { ...item, ...clamped, y: 0 });
+  }
+
+  const support = findStackSupport(truck, item, others);
+  if (!support) return null;
+  return replaceItem(placed, id, { ...item, ...support });
+}
+
 export function testPacker(): void {
   const truck: TruckSpec = {
     id: "trailer-standard",

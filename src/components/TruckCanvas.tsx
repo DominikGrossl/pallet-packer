@@ -8,12 +8,30 @@ import {
   type ComponentRef,
   type CSSProperties,
   type MutableRefObject,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
 } from "react";
 import clsx from "clsx";
 import { Canvas, useThree, type ThreeEvent } from "@react-three/fiber";
 import { Edges, Grid, Html, OrbitControls } from "@react-three/drei";
 import { BackSide, DoubleSide, type WebGLRenderer } from "three";
-import { PALLET_BASE_HEIGHT_MM, type PackingResult, type PlacedItem, type TruckSpec } from "../lib/packer";
+import {
+  ArrowDownToLine,
+  ArrowUpFromLine,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
+  RotateCw,
+  X,
+} from "lucide-react";
+import {
+  NUDGE_STEP_MM,
+  PALLET_BASE_HEIGHT_MM,
+  type PackingResult,
+  type PlacedItem,
+  type TruckSpec,
+} from "../lib/packer";
 import type { Theme } from "../lib/theme";
 
 type Vec3 = [number, number, number];
@@ -56,6 +74,11 @@ export interface TruckCanvasProps {
   truck: TruckSpec;
   result: PackingResult | null;
   theme: Theme;
+  selectedUnitId?: string | null;
+  onSelectedUnitIdChange?: (id: string | null) => void;
+  onNudge?: (id: string, delta: { dx?: number; dy?: number; dz?: number }) => boolean | void;
+  onRotate?: (id: string) => void;
+  onToggleElevation?: (id: string) => void;
 }
 
 export interface TruckCanvasHandle {
@@ -166,9 +189,11 @@ function buildPalletGeometry(item: PlacedItem, truck: TruckDimensions): PalletGe
 function TruckShell({
   dimensions,
   palette,
+  onEmptyClick,
 }: {
   dimensions: TruckDimensions;
   palette: ScenePalette;
+  onEmptyClick?: (point: { clientX: number; clientY: number }) => void;
 }) {
   const { width, length, height } = dimensions;
   const cabLength = Math.max(Math.min(length * 0.14, 1.8), 0.2);
@@ -178,9 +203,15 @@ function TruckShell({
   // Scaled off the framing size, so the badges clear the roof edge by a constant amount on screen.
   const labelLift = Math.max(width, length, height) * 0.06;
 
+  const clickEmpty = (event: ThreeEvent<MouseEvent>) => {
+    event.stopPropagation();
+    const native = event.nativeEvent;
+    onEmptyClick?.({ clientX: native.clientX, clientY: native.clientY });
+  };
+
   return (
     <group>
-      <mesh position={[0, height / 2, 0]}>
+      <mesh position={[0, height / 2, 0]} onClick={clickEmpty}>
         <boxGeometry args={[width, height, length]} />
         <meshBasicMaterial
           color={palette.bed}
@@ -192,7 +223,7 @@ function TruckShell({
         <Edges color={palette.edge} lineWidth={1.4} />
       </mesh>
 
-      <mesh position={[0, 0.002, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+      <mesh position={[0, 0.002, 0]} rotation={[-Math.PI / 2, 0, 0]} onClick={clickEmpty}>
         <planeGeometry args={[width, length]} />
         <meshStandardMaterial color={palette.bed} roughness={1} metalness={0} side={DoubleSide} />
       </mesh>
@@ -259,14 +290,19 @@ function PalletMesh({
   unit,
   palette,
   hovered,
+  selected,
   onHover,
+  onSelect,
 }: {
   unit: PalletUnit;
   palette: ScenePalette;
   hovered: boolean;
+  selected: boolean;
   onHover: (hovered: boolean) => void;
+  onSelect: () => void;
 }) {
   const { geometry } = unit;
+  const highlighted = hovered || selected;
 
   const enter = (event: ThreeEvent<PointerEvent>) => {
     event.stopPropagation();
@@ -276,6 +312,11 @@ function PalletMesh({
   const leave = (event: ThreeEvent<PointerEvent>) => {
     event.stopPropagation();
     onHover(false);
+  };
+
+  const select = (event: ThreeEvent<MouseEvent>) => {
+    event.stopPropagation();
+    onSelect();
   };
 
   return (
@@ -298,12 +339,12 @@ function PalletMesh({
           <boxGeometry args={geometry.cargo} />
           <meshStandardMaterial
             color={geometry.color}
-            emissive={hovered ? COLOR_HOVER : "#000000"}
-            emissiveIntensity={hovered ? 0.16 : 0}
+            emissive={highlighted ? COLOR_HOVER : "#000000"}
+            emissiveIntensity={highlighted ? (selected ? 0.22 : 0.16) : 0}
             roughness={0.45}
             metalness={0}
             transparent
-            opacity={hovered ? 0.92 : 0.85}
+            opacity={highlighted ? 0.92 : 0.85}
             depthWrite
             polygonOffset
             polygonOffsetFactor={-1}
@@ -313,7 +354,7 @@ function PalletMesh({
         </mesh>
       ) : null}
 
-      {hovered ? (
+      {highlighted ? (
         <mesh
           position={[0, geometry.centerY, 0]}
           scale={HOVER_SCALE}
@@ -323,21 +364,27 @@ function PalletMesh({
           <meshBasicMaterial
             color={COLOR_HOVER}
             transparent
-            opacity={0.1}
+            opacity={selected ? 0.16 : 0.1}
             depthTest={false}
             depthWrite={false}
           />
           <Edges
             color={COLOR_HOVER}
-            lineWidth={1.4}
+            lineWidth={selected ? 2.2 : 1.4}
             depthTest={false}
             renderOrder={21}
           />
         </mesh>
       ) : null}
 
-      {/* Invisible hit box: one hover target for the pallet and its cargo. */}
-      <mesh position={[0, geometry.centerY, 0]} onPointerOver={enter} onPointerOut={leave}>
+      {/* Invisible hit box: one hover/click target for the pallet and its cargo. */}
+      <mesh
+        position={[0, geometry.centerY, 0]}
+        onPointerOver={enter}
+        onPointerOut={leave}
+        onPointerDown={(event) => event.stopPropagation()}
+        onClick={select}
+      >
         <boxGeometry args={geometry.bounds} />
         <meshBasicMaterial transparent opacity={0} depthWrite={false} />
       </mesh>
@@ -415,6 +462,167 @@ function PalletHud({
   );
 }
 
+const HOLD_DELAY_MS = 300;
+const HOLD_INTERVAL_MS = 75;
+
+function InspectorButton({
+  label,
+  onClick,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex h-8 flex-1 items-center justify-center gap-1 rounded-lg border border-slate-200/80 bg-white/80 px-2 text-[11px] font-medium text-slate-700 shadow-sm transition select-none hover:bg-white dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-200 dark:hover:bg-slate-800"
+    >
+      {children}
+      {label}
+    </button>
+  );
+}
+
+function NudgeButton({
+  label,
+  delta,
+  onNudge,
+  children,
+}: {
+  label: string;
+  delta: { dx?: number; dy?: number; dz?: number };
+  onNudge: (delta: { dx?: number; dy?: number; dz?: number }) => boolean;
+  children: ReactNode;
+}) {
+  const delayRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
+  const intervalRef = useRef<ReturnType<typeof window.setInterval> | null>(null);
+  const holdingRef = useRef(false);
+
+  const stopRepeat = () => {
+    holdingRef.current = false;
+    if (delayRef.current !== null) {
+      window.clearTimeout(delayRef.current);
+      delayRef.current = null;
+    }
+    if (intervalRef.current !== null) {
+      window.clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+  };
+
+  const step = () => {
+    const moved = onNudge(delta);
+    if (!moved) stopRepeat();
+    return moved;
+  };
+
+  const startRepeat = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    stopRepeat();
+    holdingRef.current = true;
+    if (!step()) return;
+    delayRef.current = window.setTimeout(() => {
+      delayRef.current = null;
+      if (!holdingRef.current) return;
+      intervalRef.current = window.setInterval(() => {
+        if (!holdingRef.current || !step()) stopRepeat();
+      }, HOLD_INTERVAL_MS);
+    }, HOLD_DELAY_MS);
+  };
+
+  useEffect(() => stopRepeat, []);
+
+  return (
+    <button
+      type="button"
+      onPointerDown={startRepeat}
+      onPointerUp={stopRepeat}
+      onPointerLeave={stopRepeat}
+      onPointerCancel={stopRepeat}
+      className="inline-flex h-8 flex-1 items-center justify-center gap-1 rounded-lg border border-slate-200/80 bg-white/80 px-2 text-[11px] font-medium text-slate-700 shadow-sm transition select-none hover:bg-white dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-200 dark:hover:bg-slate-800"
+      style={{ touchAction: "none" }}
+    >
+      {children}
+      {label}
+    </button>
+  );
+}
+
+function PalletInspector({
+  unit,
+  unitNumber,
+  onClose,
+  onNudge,
+  onRotate,
+  onToggleElevation,
+}: {
+  unit: PalletUnit;
+  unitNumber: number;
+  onClose: () => void;
+  onNudge: (delta: { dx?: number; dy?: number; dz?: number }) => boolean;
+  onRotate: () => void;
+  onToggleElevation: () => void;
+}) {
+  const { item } = unit;
+  const stacked = item.y > 0;
+
+  return (
+    <div className="absolute bottom-4 left-1/2 z-20 w-[min(100%-1.5rem,28rem)] -translate-x-1/2">
+      <div className="rounded-2xl border border-slate-200/60 bg-white/80 px-3 py-2.5 shadow-md backdrop-blur-md dark:border-slate-800/80 dark:bg-slate-900/80">
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <p className="truncate text-xs font-semibold text-slate-800 dark:text-slate-100">
+            {item.name} · č. {unitNumber}
+          </p>
+          <button
+            type="button"
+            aria-label="Zrušit výběr"
+            onClick={onClose}
+            className="rounded-lg p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center gap-1.5">
+            <NudgeButton label="Vlevo" delta={{ dx: -NUDGE_STEP_MM }} onNudge={onNudge}>
+              <ChevronLeft className="h-3.5 w-3.5" />
+            </NudgeButton>
+            <NudgeButton label="Vpravo" delta={{ dx: NUDGE_STEP_MM }} onNudge={onNudge}>
+              <ChevronRight className="h-3.5 w-3.5" />
+            </NudgeButton>
+            <NudgeButton label="Dopředu" delta={{ dz: -NUDGE_STEP_MM }} onNudge={onNudge}>
+              <ChevronUp className="h-3.5 w-3.5" />
+            </NudgeButton>
+            <NudgeButton label="Dozadu" delta={{ dz: NUDGE_STEP_MM }} onNudge={onNudge}>
+              <ChevronDown className="h-3.5 w-3.5" />
+            </NudgeButton>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <InspectorButton
+              label={stacked ? "Na podlahu" : "Do stohu"}
+              onClick={onToggleElevation}
+            >
+              {stacked ? (
+                <ArrowDownToLine className="h-3.5 w-3.5" />
+              ) : (
+                <ArrowUpFromLine className="h-3.5 w-3.5" />
+              )}
+            </InspectorButton>
+            <InspectorButton label="Otočit o 90°" onClick={onRotate}>
+              <RotateCw className="h-3.5 w-3.5" />
+            </InspectorButton>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ViewControls({
   position,
   target,
@@ -481,12 +689,22 @@ function triggerPngDownload(dataUrl: string, filename: string) {
 }
 
 export default forwardRef<TruckCanvasHandle, TruckCanvasProps>(function TruckCanvas(
-  { truck, result, theme },
+  {
+    truck,
+    result,
+    theme,
+    selectedUnitId = null,
+    onSelectedUnitIdChange,
+    onNudge,
+    onRotate,
+    onToggleElevation,
+  },
   ref,
 ) {
-  const [hoveredItem, setHoveredItem] = useState<PlacedItem | null>(null);
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
   // Sticky copy of the last hovered item, so the HUD keeps its content while fading out.
-  const [hudItem, setHudItem] = useState<PlacedItem | null>(null);
+  const [hudId, setHudId] = useState<string | null>(null);
+  const pointerDownRef = useRef({ x: 0, y: 0 });
   const glRef = useRef<WebGLRenderer | null>(null);
   const palette = PALETTES[theme];
 
@@ -510,28 +728,44 @@ export default forwardRef<TruckCanvasHandle, TruckCanvasProps>(function TruckCan
 
   // Identity lookup, so a stale hover from a previous calculation resolves to nothing.
   const hoveredUnit = useMemo(
-    () => units.find((unit) => unit.item === hoveredItem),
-    [units, hoveredItem],
+    () => units.find((unit) => unit.item.id === hoveredId),
+    [units, hoveredId],
   );
 
-  const hudUnit = useMemo(() => units.find((unit) => unit.item === hudItem), [units, hudItem]);
+  const hudUnit = useMemo(() => units.find((unit) => unit.item.id === hudId), [units, hudId]);
 
-  const sameGroupUnits = hudUnit
-    ? units.filter(
-        (unit) =>
-          (unit.item.sourceId ?? unit.item.name) === (hudUnit.item.sourceId ?? hudUnit.item.name),
-      )
-    : [];
-  const unitIndex = hudUnit ? sameGroupUnits.indexOf(hudUnit) + 1 : 0;
+  const selectedUnit = useMemo(
+    () => units.find((unit) => unit.item.id === selectedUnitId) ?? null,
+    [units, selectedUnitId],
+  );
+
+  const unitNumberOf = (target: PalletUnit | undefined) => {
+    if (!target) return 1;
+    const sameGroupUnits = units.filter(
+      (unit) =>
+        (unit.item.sourceId ?? unit.item.name) === (target.item.sourceId ?? target.item.name),
+    );
+    const unitIndex = sameGroupUnits.indexOf(target) + 1;
+    return unitIndex > 0 ? unitIndex : 1;
+  };
 
   const handleHover = (item: PlacedItem, hovered: boolean) => {
     if (hovered) {
-      setHoveredItem(item);
-      setHudItem(item);
+      setHoveredId(item.id);
+      setHudId(item.id);
       return;
     }
-    // The pointer may already be over a neighbouring pallet, so only clear our own entry.
-    setHoveredItem((current) => (current === item ? null : current));
+    setHoveredId((current) => (current === item.id ? null : current));
+  };
+
+  const selectUnit = (id: string | null) => {
+    onSelectedUnitIdChange?.(id);
+  };
+
+  const deselectIfClick = (point: { clientX: number; clientY: number }) => {
+    const dx = point.clientX - pointerDownRef.current.x;
+    const dy = point.clientY - pointerDownRef.current.y;
+    if (Math.hypot(dx, dy) < 5) selectUnit(null);
   };
 
   useImperativeHandle(ref, () => ({
@@ -568,7 +802,7 @@ export default forwardRef<TruckCanvasHandle, TruckCanvasProps>(function TruckCan
     <div
       className={clsx(
         "relative h-full w-full overflow-hidden rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-900",
-        hoveredUnit && "cursor-pointer",
+        (hoveredUnit || selectedUnit) && "cursor-pointer",
       )}
     >
       <Canvas
@@ -576,6 +810,12 @@ export default forwardRef<TruckCanvasHandle, TruckCanvasProps>(function TruckCan
         shadows={false}
         gl={{ antialias: true, preserveDrawingBuffer: true }}
         camera={initialCamera}
+        onPointerDown={(event) => {
+          pointerDownRef.current = { x: event.clientX, y: event.clientY };
+        }}
+        onPointerMissed={(event) => {
+          deselectIfClick({ clientX: event.clientX, clientY: event.clientY });
+        }}
       >
         <SnapshotBinder glRef={glRef} />
         <color attach="background" args={[palette.background]} />
@@ -600,7 +840,11 @@ export default forwardRef<TruckCanvasHandle, TruckCanvasProps>(function TruckCan
           side={DoubleSide}
         />
 
-        <TruckShell dimensions={dimensions} palette={palette} />
+        <TruckShell
+          dimensions={dimensions}
+          palette={palette}
+          onEmptyClick={deselectIfClick}
+        />
 
         {units.map((unit, index) => (
           <PalletMesh
@@ -608,7 +852,9 @@ export default forwardRef<TruckCanvasHandle, TruckCanvasProps>(function TruckCan
             unit={unit}
             palette={palette}
             hovered={hoveredUnit === unit}
+            selected={selectedUnit === unit}
             onHover={(hovered) => handleHover(unit.item, hovered)}
+            onSelect={() => selectUnit(unit.item.id)}
           />
         ))}
 
@@ -620,11 +866,22 @@ export default forwardRef<TruckCanvasHandle, TruckCanvasProps>(function TruckCan
         />
       </Canvas>
 
-      {hudUnit ? (
+      {hudUnit && !selectedUnit ? (
         <PalletHud
           unit={hudUnit}
           visible={Boolean(hoveredUnit)}
-          unitNumber={unitIndex > 0 ? unitIndex : 1}
+          unitNumber={unitNumberOf(hudUnit)}
+        />
+      ) : null}
+
+      {selectedUnit ? (
+        <PalletInspector
+          unit={selectedUnit}
+          unitNumber={unitNumberOf(selectedUnit)}
+          onClose={() => selectUnit(null)}
+          onNudge={(delta) => onNudge?.(selectedUnit.item.id, delta) ?? false}
+          onRotate={() => onRotate?.(selectedUnit.item.id)}
+          onToggleElevation={() => onToggleElevation?.(selectedUnit.item.id)}
         />
       ) : null}
 

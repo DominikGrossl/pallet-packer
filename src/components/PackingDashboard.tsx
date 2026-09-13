@@ -18,6 +18,10 @@ import {
 import TruckCanvas, { type TruckCanvasHandle } from "./TruckCanvas";
 import {
   packTruck,
+  tryNudgePlacedItem,
+  tryRotatePlacedItem,
+  tryTogglePlacedElevation,
+  updatePlacedItems,
   type CargoItem,
   type PackingResult,
   type TruckSpec,
@@ -224,9 +228,12 @@ export default function PackingDashboard() {
 
   const [queue, setQueue] = useState<QueueEntry[]>([]);
   const [result, setResult] = useState<PackingResult | null>(null);
+  const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const importRef = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<TruckCanvasHandle>(null);
+  const resultRef = useRef(result);
+  resultRef.current = result;
 
   useEffect(() => {
     applyTheme(theme);
@@ -334,6 +341,34 @@ export default function PackingDashboard() {
       })),
     );
     setResult(packTruck(activeTruck, items));
+    setSelectedUnitId(null);
+  };
+
+  const nudgeSelected = (id: string, delta: { dx?: number; dy?: number; dz?: number }): boolean => {
+    const current = resultRef.current;
+    if (!current) return false;
+    const next = tryNudgePlacedItem(activeTruck, current.placed, id, delta);
+    if (!next) return false;
+    const updated = updatePlacedItems(activeTruck, current, next);
+    resultRef.current = updated;
+    setResult(updated);
+    return true;
+  };
+
+  const rotateSelected = (id: string) => {
+    setResult((current) => {
+      if (!current) return current;
+      const next = tryRotatePlacedItem(activeTruck, current.placed, id);
+      return next ? updatePlacedItems(activeTruck, current, next) : current;
+    });
+  };
+
+  const toggleSelectedElevation = (id: string) => {
+    setResult((current) => {
+      if (!current) return current;
+      const next = tryTogglePlacedElevation(activeTruck, current.placed, id);
+      return next ? updatePlacedItems(activeTruck, current, next) : current;
+    });
   };
 
   const queuedCount = queue.reduce((sum, entry) => sum + entry.quantity, 0);
@@ -648,7 +683,21 @@ export default function PackingDashboard() {
               </div>
             </div>
             <div className="h-[min(70vh,560px)] min-h-[360px] w-full">
-              <TruckCanvas ref={canvasRef} truck={activeTruck} result={result} theme={theme} />
+              <TruckCanvas
+                ref={canvasRef}
+                truck={activeTruck}
+                result={result}
+                theme={theme}
+                selectedUnitId={
+                  selectedUnitId && result?.placed.some((item) => item.id === selectedUnitId)
+                    ? selectedUnitId
+                    : null
+                }
+                onSelectedUnitIdChange={setSelectedUnitId}
+                onNudge={nudgeSelected}
+                onRotate={rotateSelected}
+                onToggleElevation={toggleSelectedElevation}
+              />
             </div>
           </section>
         </div>
