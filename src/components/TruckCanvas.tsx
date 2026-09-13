@@ -1,16 +1,19 @@
 import {
+  forwardRef,
   useEffect,
+  useImperativeHandle,
   useMemo,
   useRef,
   useState,
   type ComponentRef,
   type CSSProperties,
+  type MutableRefObject,
 } from "react";
 import clsx from "clsx";
 import { Canvas, useThree, type ThreeEvent } from "@react-three/fiber";
 import { Edges, Grid, Html, OrbitControls } from "@react-three/drei";
-import { BackSide, DoubleSide } from "three";
-import type { PackingResult, PlacedItem, TruckSpec } from "../lib/packer";
+import { BackSide, DoubleSide, type WebGLRenderer } from "three";
+import { PALLET_BASE_HEIGHT_MM, type PackingResult, type PlacedItem, type TruckSpec } from "../lib/packer";
 import type { Theme } from "../lib/theme";
 
 type Vec3 = [number, number, number];
@@ -20,7 +23,6 @@ interface ScenePalette {
   bed: string;
   cab: string;
   edge: string;
-  edgeHovered: string;
   rearFrame: string;
   gridCell: string;
   gridSection: string;
@@ -56,9 +58,15 @@ export interface TruckCanvasProps {
   theme: Theme;
 }
 
+export interface TruckCanvasHandle {
+  downloadSnapshot: () => void;
+}
+
 const MM_TO_M = 0.001;
-const PALLET_BASE_MM = 150;
 const MIN_TRUCK_MM = 100;
+/** Shrink abutting faces so neighbouring boxes do not share a depth-buffer plane. */
+const FACE_INSET = 0.998;
+const LAYER_GAP_MM = 1;
 
 /** Cargo hues read on either background, so only the neutrals switch with the theme. */
 const COLOR_CARGO = "#38bdf8";
@@ -66,6 +74,8 @@ const COLOR_CARGO_OVERHANGING = "#fb923c";
 const COLOR_CARGO_STACKED = "#4ade80";
 const COLOR_PALLET = "#d4a373";
 const COLOR_PALLET_EDGE = "#b08968";
+const COLOR_HOVER = "#9ed843";
+const HOVER_SCALE = 1.002;
 
 const PALETTES: Record<Theme, ScenePalette> = {
   light: {
@@ -73,7 +83,6 @@ const PALETTES: Record<Theme, ScenePalette> = {
     bed: "#e2e8f0",
     cab: "#cbd5e1",
     edge: "#94a3b8",
-    edgeHovered: "#0f172a",
     rearFrame: "#64748b",
     gridCell: "#e2e8f0",
     gridSection: "#cbd5e1",
@@ -83,7 +92,6 @@ const PALETTES: Record<Theme, ScenePalette> = {
     bed: "#1e293b",
     cab: "#334155",
     edge: "#94a3b8",
-    edgeHovered: "#f8fafc",
     rearFrame: "#cbd5e1",
     gridCell: "#1e293b",
     gridSection: "#334155",
@@ -124,25 +132,33 @@ function cargoColor(item: PlacedItem): string {
   return COLOR_CARGO;
 }
 
+function insetSize(size: number): number {
+  return size * FACE_INSET;
+}
+
 function buildPalletGeometry(item: PlacedItem, truck: TruckDimensions): PalletGeometry {
   const footprintWidth = toMeters(item.width);
   const footprintLength = toMeters(item.length);
-  const totalHeight = toMeters(item.height);
-
-  const baseHeight = Math.min(toMeters(PALLET_BASE_MM), totalHeight);
-  const cargoHeight = Math.max(totalHeight - baseHeight, 0);
+  const cargoHeight = Math.max(toMeters(item.height), 0);
+  const baseHeight = toMeters(PALLET_BASE_HEIGHT_MM);
+  const layerGap = toMeters(LAYER_GAP_MM);
+  const visualHeight = baseHeight + layerGap + cargoHeight;
   const floorY = toMeters(item.y);
 
   return {
     // The packer anchors items by their occupied footprint, so pallet and cargo share its centre.
     centerX: toMeters(item.x) + footprintWidth / 2 - truck.width / 2,
     centerZ: toMeters(item.z) + footprintLength / 2 - truck.length / 2,
-    base: [toMeters(item.palletWidth), baseHeight, toMeters(item.palletLength)],
+    base: [
+      insetSize(toMeters(item.palletWidth)),
+      baseHeight,
+      insetSize(toMeters(item.palletLength)),
+    ],
     baseCenterY: floorY + baseHeight / 2,
-    cargo: [footprintWidth, cargoHeight, footprintLength],
-    cargoCenterY: floorY + baseHeight + cargoHeight / 2,
-    bounds: [footprintWidth, totalHeight, footprintLength],
-    centerY: floorY + totalHeight / 2,
+    cargo: [insetSize(footprintWidth), cargoHeight, insetSize(footprintLength)],
+    cargoCenterY: floorY + baseHeight + layerGap + cargoHeight / 2,
+    bounds: [footprintWidth, visualHeight, footprintLength],
+    centerY: floorY + visualHeight / 2,
     color: cargoColor(item),
   };
 }
@@ -251,7 +267,6 @@ function PalletMesh({
   onHover: (hovered: boolean) => void;
 }) {
   const { geometry } = unit;
-  const edgeWidth = hovered ? 2.4 : 1;
 
   const enter = (event: ThreeEvent<PointerEvent>) => {
     event.stopPropagation();
@@ -267,11 +282,15 @@ function PalletMesh({
     <group position={[geometry.centerX, 0, geometry.centerZ]}>
       <mesh position={[0, geometry.baseCenterY, 0]}>
         <boxGeometry args={geometry.base} />
-        <meshStandardMaterial color={COLOR_PALLET} roughness={0.9} metalness={0} />
-        <Edges
-          color={hovered ? palette.edgeHovered : COLOR_PALLET_EDGE}
-          lineWidth={edgeWidth}
+        <meshStandardMaterial
+          color={COLOR_PALLET}
+          roughness={0.9}
+          metalness={0}
+          polygonOffset
+          polygonOffsetFactor={1}
+          polygonOffsetUnits={1}
         />
+        <Edges color={COLOR_PALLET_EDGE} lineWidth={1} />
       </mesh>
 
       {geometry.cargo[1] > 0 ? (
@@ -279,14 +298,40 @@ function PalletMesh({
           <boxGeometry args={geometry.cargo} />
           <meshStandardMaterial
             color={geometry.color}
+            emissive={hovered ? COLOR_HOVER : "#000000"}
+            emissiveIntensity={hovered ? 0.16 : 0}
             roughness={0.45}
             metalness={0}
             transparent
-            opacity={0.85}
+            opacity={hovered ? 0.92 : 0.85}
+            depthWrite
+            polygonOffset
+            polygonOffsetFactor={-1}
+            polygonOffsetUnits={-1}
+          />
+          <Edges color={palette.edge} lineWidth={1} />
+        </mesh>
+      ) : null}
+
+      {hovered ? (
+        <mesh
+          position={[0, geometry.centerY, 0]}
+          scale={HOVER_SCALE}
+          renderOrder={20}
+        >
+          <boxGeometry args={geometry.bounds} />
+          <meshBasicMaterial
+            color={COLOR_HOVER}
+            transparent
+            opacity={0.1}
+            depthTest={false}
+            depthWrite={false}
           />
           <Edges
-            color={hovered ? palette.edgeHovered : palette.edge}
-            lineWidth={edgeWidth}
+            color={COLOR_HOVER}
+            lineWidth={1.4}
+            depthTest={false}
+            renderOrder={21}
           />
         </mesh>
       ) : null}
@@ -312,7 +357,15 @@ function HudRow({ label, value }: { label: string; value: string }) {
 }
 
 /** Parked in the corner rather than following the cursor, so it never sits under the pointer. */
-function PalletHud({ unit, visible }: { unit: PalletUnit; visible: boolean }) {
+function PalletHud({
+  unit,
+  visible,
+  unitNumber,
+}: {
+  unit: PalletUnit;
+  visible: boolean;
+  unitNumber: number;
+}) {
   const { item, geometry } = unit;
 
   return (
@@ -329,9 +382,10 @@ function PalletHud({ unit, visible }: { unit: PalletUnit; visible: boolean }) {
             className="h-2.5 w-2.5 shrink-0 rounded-full ring-1 ring-slate-200 dark:ring-slate-700"
             style={{ backgroundColor: geometry.color }}
           />
-          <p className="text-xs font-semibold text-slate-900 dark:text-slate-100">{item.name}</p>
+          <p className="text-xs font-semibold text-slate-900 dark:text-slate-100">
+            {item.name} · č. {unitNumber}
+          </p>
         </div>
-        <p className="mt-0.5 text-[10px] text-slate-400 dark:text-slate-500">{item.id}</p>
 
         <dl className="mt-2 space-y-1">
           <HudRow
@@ -402,10 +456,38 @@ function ViewControls({
   );
 }
 
-export default function TruckCanvas({ truck, result, theme }: TruckCanvasProps) {
+function SnapshotBinder({
+  glRef,
+}: {
+  glRef: MutableRefObject<WebGLRenderer | null>;
+}) {
+  const gl = useThree((state) => state.gl);
+
+  useEffect(() => {
+    glRef.current = gl;
+    return () => {
+      glRef.current = null;
+    };
+  }, [gl, glRef]);
+
+  return null;
+}
+
+function triggerPngDownload(dataUrl: string, filename: string) {
+  const link = document.createElement("a");
+  link.href = dataUrl;
+  link.download = filename;
+  link.click();
+}
+
+export default forwardRef<TruckCanvasHandle, TruckCanvasProps>(function TruckCanvas(
+  { truck, result, theme },
+  ref,
+) {
   const [hoveredItem, setHoveredItem] = useState<PlacedItem | null>(null);
   // Sticky copy of the last hovered item, so the HUD keeps its content while fading out.
   const [hudItem, setHudItem] = useState<PlacedItem | null>(null);
+  const glRef = useRef<WebGLRenderer | null>(null);
   const palette = PALETTES[theme];
 
   const dimensions = useMemo<TruckDimensions>(
@@ -434,6 +516,14 @@ export default function TruckCanvas({ truck, result, theme }: TruckCanvasProps) 
 
   const hudUnit = useMemo(() => units.find((unit) => unit.item === hudItem), [units, hudItem]);
 
+  const sameGroupUnits = hudUnit
+    ? units.filter(
+        (unit) =>
+          (unit.item.sourceId ?? unit.item.name) === (hudUnit.item.sourceId ?? hudUnit.item.name),
+      )
+    : [];
+  const unitIndex = hudUnit ? sameGroupUnits.indexOf(hudUnit) + 1 : 0;
+
   const handleHover = (item: PlacedItem, hovered: boolean) => {
     if (hovered) {
       setHoveredItem(item);
@@ -443,6 +533,14 @@ export default function TruckCanvas({ truck, result, theme }: TruckCanvasProps) 
     // The pointer may already be over a neighbouring pallet, so only clear our own entry.
     setHoveredItem((current) => (current === item ? null : current));
   };
+
+  useImperativeHandle(ref, () => ({
+    downloadSnapshot() {
+      const gl = glRef.current;
+      if (!gl) return;
+      triggerPngDownload(gl.domElement.toDataURL("image/png"), `naklad-kamion-${Date.now()}.png`);
+    },
+  }));
 
   const radius = Math.max(dimensions.width, dimensions.length, dimensions.height);
 
@@ -473,7 +571,13 @@ export default function TruckCanvas({ truck, result, theme }: TruckCanvasProps) 
         hoveredUnit && "cursor-pointer",
       )}
     >
-      <Canvas dpr={[1, 2]} shadows={false} gl={{ antialias: true }} camera={initialCamera}>
+      <Canvas
+        dpr={[1, 2]}
+        shadows={false}
+        gl={{ antialias: true, preserveDrawingBuffer: true }}
+        camera={initialCamera}
+      >
+        <SnapshotBinder glRef={glRef} />
         <color attach="background" args={[palette.background]} />
 
         <ambientLight intensity={0.7} />
@@ -516,15 +620,21 @@ export default function TruckCanvas({ truck, result, theme }: TruckCanvasProps) 
         />
       </Canvas>
 
-      {hudUnit ? <PalletHud unit={hudUnit} visible={Boolean(hoveredUnit)} /> : null}
+      {hudUnit ? (
+        <PalletHud
+          unit={hudUnit}
+          visible={Boolean(hoveredUnit)}
+          unitNumber={unitIndex > 0 ? unitIndex : 1}
+        />
+      ) : null}
 
       {units.length === 0 ? (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-          <p className="rounded-lg border border-slate-200 bg-white/90 px-3.5 py-2 text-sm text-slate-500 shadow-sm dark:border-slate-700 dark:bg-slate-900/90 dark:text-slate-400">
+        <div className="pointer-events-none absolute inset-x-0 bottom-4 flex justify-center">
+          <p className="rounded-full border border-slate-200/60 bg-white/80 px-4 py-2 text-xs font-medium text-slate-600 shadow-md backdrop-blur-md dark:border-slate-800/80 dark:bg-slate-900/80 dark:text-slate-300">
             Nastavte náklad a klikněte na Vypočítat náklad
           </p>
         </div>
       ) : null}
     </div>
   );
-}
+});

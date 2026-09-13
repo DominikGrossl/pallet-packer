@@ -1,20 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import clsx from "clsx";
 import {
-  Box,
-  Boxes,
   Calculator,
+  Camera,
+  ClipboardList,
   Download,
   Moon,
   Package,
   Plus,
+  ScanBox,
   Settings,
   Sun,
   Trash2,
   Truck,
   Upload,
 } from "lucide-react";
-import TruckCanvas from "./TruckCanvas";
+import TruckCanvas, { type TruckCanvasHandle } from "./TruckCanvas";
 import {
   packTruck,
   type CargoItem,
@@ -53,7 +54,7 @@ const percentFormat = new Intl.NumberFormat("cs-CZ", {
 });
 
 const fieldBaseClass =
-  "w-full rounded-lg border border-slate-200 px-3 py-2 text-sm shadow-sm outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-200 dark:border-slate-700 dark:placeholder:text-slate-500 dark:focus:border-slate-500 dark:focus:ring-slate-700";
+  "h-10 w-full rounded-lg border border-slate-200 px-3 text-sm shadow-sm outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-200 dark:border-slate-700 dark:placeholder:text-slate-500 dark:focus:border-slate-500 dark:focus:ring-slate-700";
 
 const labelClass =
   "mb-1 block text-xs font-medium tracking-wide text-slate-500 uppercase dark:text-slate-400";
@@ -64,8 +65,11 @@ const cardClass =
 const panelClass =
   "rounded-lg border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/50";
 
-const primaryButtonClass =
-  "inline-flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white dark:disabled:bg-slate-700 dark:disabled:text-slate-500";
+const addToLoadButtonClass =
+  "inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-lg border border-transparent bg-slate-900 px-4 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700";
+
+const calculateButtonClass =
+  "inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#9ed843] px-4 py-2.5 text-sm font-semibold text-slate-950 shadow-sm transition-all hover:bg-[#8ec738] active:scale-[0.99] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 disabled:shadow-none disabled:hover:bg-slate-100 disabled:active:scale-100 dark:disabled:bg-slate-800/50 dark:disabled:text-slate-500 dark:disabled:hover:bg-slate-800/50";
 
 const outlineButtonClass =
   "inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium shadow-sm transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:hover:bg-slate-800";
@@ -96,7 +100,8 @@ function NumberField({
   label,
   value,
   onChange,
-  min = 1,
+  min = 0,
+  step = 10,
   suffix = "mm",
   disabled = false,
 }: {
@@ -104,6 +109,7 @@ function NumberField({
   value: number;
   onChange: (value: number) => void;
   min?: number;
+  step?: number;
   suffix?: string;
   disabled?: boolean;
 }) {
@@ -133,6 +139,7 @@ function NumberField({
           type="number"
           inputMode="numeric"
           min={min}
+          step={step}
           disabled={disabled}
           placeholder={String(min)}
           value={text}
@@ -170,7 +177,7 @@ function Toggle({
       role="switch"
       aria-checked={checked}
       onClick={() => onChange(!checked)}
-      className={clsx(panelClass, "flex items-center justify-between gap-3 px-3 py-2 text-sm")}
+      className="flex h-10 items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50/50 px-3 text-sm dark:border-slate-800 dark:bg-slate-900/50"
     >
       <span className="font-medium text-slate-700 dark:text-slate-200">{label}</span>
       <span
@@ -219,6 +226,7 @@ export default function PackingDashboard() {
   const [result, setResult] = useState<PackingResult | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const importRef = useRef<HTMLInputElement>(null);
+  const canvasRef = useRef<TruckCanvasHandle>(null);
 
   useEffect(() => {
     applyTheme(theme);
@@ -248,6 +256,7 @@ export default function PackingDashboard() {
     setTruckWidth(truck.innerWidth);
     setTruckLength(truck.innerLength);
     setTruckHeight(truck.innerHeight);
+    setResult(null);
   }, []);
 
   const applyPalletPreset = useCallback((pallet: PalletPreset) => {
@@ -261,6 +270,7 @@ export default function PackingDashboard() {
   const onTruckSelect = (id: string) => {
     const truck = trucks.find((item) => item.id === id);
     setSelectedTruckId(id);
+    setResult(null);
     if (truck && !customTruck) applyTruckPreset(truck);
   };
 
@@ -312,7 +322,9 @@ export default function PackingDashboard() {
     const items: CargoItem[] = queue.flatMap((entry) =>
       Array.from({ length: entry.quantity }, (_, index) => ({
         id: `${entry.id}-${index + 1}`,
-        name: `${entry.name} ${index + 1}`,
+        sourceId: entry.id,
+        unitNumber: index + 1,
+        name: entry.name,
         palletWidth: entry.palletWidth,
         palletLength: entry.palletLength,
         cargoWidth: entry.cargoWidth,
@@ -325,6 +337,15 @@ export default function PackingDashboard() {
   };
 
   const queuedCount = queue.reduce((sum, entry) => sum + entry.quantity, 0);
+
+  const placedBySource = useMemo(() => {
+    const counts = new Map<string, number>();
+    if (!result) return counts;
+    for (const item of result.placed) {
+      counts.set(item.sourceId, (counts.get(item.sourceId) ?? 0) + 1);
+    }
+    return counts;
+  }, [result]);
 
   const exportPresets = () => {
     const payload: PresetBundle = { trucks, pallets };
@@ -361,11 +382,16 @@ export default function PackingDashboard() {
     <div className="min-h-screen bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
       <div className="mx-auto max-w-[1440px] px-4 py-6 md:px-6">
         <header className="mb-4 flex items-center justify-between gap-3">
-          <div>
-            <p className={clsx("text-xs font-medium tracking-[0.2em] uppercase", mutedClass)}>
-              Pallet Packer
-            </p>
-            <h1 className="text-2xl font-semibold tracking-tight">Plánovač nákladu</h1>
+          <div className="flex min-w-0 flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
+            <h1 className="text-2xl font-bold tracking-tight">
+              <span>
+                paketo<span className="text-[#9ed843]">.group</span>
+              </span>
+            </h1>
+            <span className="hidden text-slate-300 sm:inline dark:text-slate-700" aria-hidden>
+              |
+            </span>
+            <p className="text-sm text-slate-500 dark:text-slate-400">Plánovač nakládky</p>
           </div>
           <button type="button" onClick={() => setSettingsOpen(true)} className={outlineButtonClass}>
             <Settings className="h-4 w-4" />
@@ -373,13 +399,14 @@ export default function PackingDashboard() {
           </button>
         </header>
 
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
-          <section className={clsx(cardClass, "lg:col-span-4")}>
+        <div className="flex flex-col gap-4">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-12 lg:items-stretch">
+          <section className={clsx(cardClass, "flex h-full flex-col lg:col-span-4")}>
             <div className="mb-4 flex items-center gap-2">
               <Truck className={headingIconClass} />
               <h2 className="text-sm font-semibold">Vozidlo</h2>
             </div>
-            <div className="space-y-3">
+            <div className="space-y-4">
               <label className="block">
                 <span className={labelClass}>Předvolba</span>
                 <select
@@ -401,6 +428,7 @@ export default function PackingDashboard() {
                 checked={customTruck}
                 onChange={(next) => {
                   setCustomTruck(next);
+                  setResult(null);
                   if (!next && selectedTruck) applyTruckPreset(selectedTruck);
                 }}
               />
@@ -408,19 +436,28 @@ export default function PackingDashboard() {
                 <NumberField
                   label="Šířka"
                   value={truckWidth}
-                  onChange={setTruckWidth}
+                  onChange={(value) => {
+                    setTruckWidth(value);
+                    setResult(null);
+                  }}
                   disabled={!customTruck}
                 />
                 <NumberField
                   label="Délka"
                   value={truckLength}
-                  onChange={setTruckLength}
+                  onChange={(value) => {
+                    setTruckLength(value);
+                    setResult(null);
+                  }}
                   disabled={!customTruck}
                 />
                 <NumberField
                   label="Výška"
                   value={truckHeight}
-                  onChange={setTruckHeight}
+                  onChange={(value) => {
+                    setTruckHeight(value);
+                    setResult(null);
+                  }}
                   disabled={!customTruck}
                 />
               </div>
@@ -432,70 +469,81 @@ export default function PackingDashboard() {
             </div>
           </section>
 
-          <section className={clsx(cardClass, "lg:col-span-8")}>
+          <section className={clsx(cardClass, "flex h-full flex-col lg:col-span-8")}>
             <div className="mb-4 flex items-center gap-2">
               <Package className={headingIconClass} />
               <h2 className="text-sm font-semibold">Náklad</h2>
             </div>
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-              <label className="md:col-span-2">
-                <span className={labelClass}>Předvolba palety</span>
-                <select
-                  value={selectedPalletId}
-                  onChange={(event) => onPalletSelect(event.target.value)}
-                  className={fieldClass()}
-                >
-                  {pallets.map((pallet) => (
-                    <option key={pallet.id} value={pallet.id}>
-                      {pallet.name} ({pallet.width} × {pallet.length})
-                    </option>
-                  ))}
-                  <option value="custom">Vlastní paleta</option>
-                </select>
-              </label>
-              <NumberField
-                label="Šířka palety"
-                value={palletWidth}
-                onChange={(value) => {
-                  setPalletWidth(value);
-                  setSelectedPalletId("custom");
-                }}
-              />
-              <NumberField
-                label="Délka palety"
-                value={palletLength}
-                onChange={(value) => {
-                  setPalletLength(value);
-                  setSelectedPalletId("custom");
-                }}
-              />
-              <NumberField label="Šířka nákladu" value={cargoWidth} onChange={setCargoWidth} />
-              <NumberField label="Délka nákladu" value={cargoLength} onChange={setCargoLength} />
-              <NumberField label="Výška nákladu" value={cargoHeight} onChange={setCargoHeight} />
-              <NumberField
-                label="Počet"
-                value={quantity}
-                onChange={setQuantity}
-                min={1}
-                suffix=""
-              />
-              <div className="md:col-span-2">
-                <span className={labelClass}>Stohování</span>
-                <Toggle label="Stohovatelné" checked={stackable} onChange={setStackable} />
+            <div className="flex h-full min-h-0 flex-1 flex-col">
+              <div className="flex flex-col gap-4">
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+                  <label className="md:col-span-2">
+                    <span className={labelClass}>Předvolba palety</span>
+                    <select
+                      value={selectedPalletId}
+                      onChange={(event) => onPalletSelect(event.target.value)}
+                      className={fieldClass()}
+                    >
+                      {pallets.map((pallet) => (
+                        <option key={pallet.id} value={pallet.id}>
+                          {pallet.name} ({pallet.width} × {pallet.length})
+                        </option>
+                      ))}
+                      <option value="custom">Vlastní paleta</option>
+                    </select>
+                  </label>
+                  <NumberField
+                    label="Šířka palety"
+                    value={palletWidth}
+                    onChange={(value) => {
+                      setPalletWidth(value);
+                      setSelectedPalletId("custom");
+                    }}
+                  />
+                  <NumberField
+                    label="Délka palety"
+                    value={palletLength}
+                    onChange={(value) => {
+                      setPalletLength(value);
+                      setSelectedPalletId("custom");
+                    }}
+                  />
+                </div>
+                <div className="grid grid-cols-3 gap-3">
+                  <NumberField label="Šířka nákladu" value={cargoWidth} onChange={setCargoWidth} />
+                  <NumberField label="Délka nákladu" value={cargoLength} onChange={setCargoLength} />
+                  <NumberField label="Výška nákladu" value={cargoHeight} onChange={setCargoHeight} />
+                </div>
               </div>
-              <div className="flex items-end md:col-span-2">
-                <button type="button" onClick={addToLoad} className={primaryButtonClass}>
+              <div className="mt-auto flex w-full items-end gap-3 pt-4">
+                <div className="w-32 shrink-0">
+                  <NumberField
+                    label="Počet"
+                    value={quantity}
+                    onChange={setQuantity}
+                    min={1}
+                    step={1}
+                    suffix=""
+                  />
+                </div>
+                <div className="shrink-0">
+                  <span className={labelClass}>Stohování</span>
+                  <Toggle label="Stohovatelné" checked={stackable} onChange={setStackable} />
+                </div>
+                <button type="button" onClick={addToLoad} className={addToLoadButtonClass}>
                   <Plus className="h-4 w-4" />
                   Přidat do nákladu
                 </button>
               </div>
             </div>
           </section>
+        </div>
 
-          <section className={clsx(cardClass, "flex min-h-[420px] flex-col lg:col-span-5")}>
+        <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-12">
+          <section className={clsx(cardClass, "lg:col-span-5")}>
             <div className="mb-4 flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <Box className={headingIconClass} />
+                <ClipboardList className={headingIconClass} />
                 <h2 className="text-sm font-semibold">Seznam nákladu</h2>
               </div>
               <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
@@ -503,18 +551,22 @@ export default function PackingDashboard() {
               </span>
             </div>
 
-            <div className="min-h-0 flex-1 space-y-2 overflow-auto pr-1">
+            <div className="max-h-[600px] space-y-2 overflow-y-auto pr-1">
               {queue.length === 0 ? (
-                <div
-                  className={clsx(
-                    "flex h-40 items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50 text-sm dark:border-slate-700 dark:bg-slate-800/40",
-                    mutedClass,
-                  )}
-                >
-                  V nákladu ještě nic není.
+                <div className="flex h-40 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-slate-200 p-6 dark:border-slate-800">
+                  <ClipboardList className="h-7 w-7 text-slate-300 dark:text-slate-600" />
+                  <p className="text-sm font-medium text-slate-500 dark:text-slate-400">
+                    V nákladu zatím nic není
+                  </p>
+                  <p className="text-xs text-slate-400 dark:text-slate-500">
+                    Přidejte palety pomocí formuláře vpravo
+                  </p>
                 </div>
               ) : (
-                queue.map((entry) => (
+                queue.map((entry) => {
+                  const placedCount = placedBySource.get(entry.id) ?? 0;
+                  const unplaced = entry.quantity - placedCount;
+                  return (
                   <div
                     key={entry.id}
                     className={clsx(panelClass, "flex items-start justify-between gap-3 px-3 py-2.5")}
@@ -530,16 +582,24 @@ export default function PackingDashboard() {
                         {entry.stackable ? " · Stohovatelné" : " · Nestohovatelné"}
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => removeFromLoad(entry.id)}
-                      className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-slate-500 transition hover:bg-white hover:text-red-600 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-red-400"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                      Odebrat
-                    </button>
+                    <div className="flex shrink-0 flex-col items-end gap-1">
+                      <button
+                        type="button"
+                        onClick={() => removeFromLoad(entry.id)}
+                        aria-label="Odebrat"
+                        className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-950/30"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                      {result && unplaced > 0 ? (
+                        <span className="rounded-md border border-rose-500/20 bg-rose-500/10 px-2 py-0.5 text-right text-xs font-semibold text-rose-500 dark:text-rose-400">
+                          ✕ Nevejde se: {unplaced} ks
+                        </span>
+                      ) : null}
+                    </div>
                   </div>
-                ))
+                  );
+                })
               )}
             </div>
 
@@ -547,7 +607,7 @@ export default function PackingDashboard() {
               type="button"
               onClick={calculateLoad}
               disabled={queue.length === 0 || truckWidth <= 0 || truckLength <= 0 || truckHeight <= 0}
-              className={clsx(primaryButtonClass, "mt-4")}
+              className={clsx(calculateButtonClass, "mt-4")}
             >
               <Calculator className="h-4 w-4" />
               Vypočítat náklad
@@ -555,7 +615,11 @@ export default function PackingDashboard() {
 
             <div className="mt-4 grid grid-cols-3 gap-2">
               <ResultStat label="Naloženo" value={result ? String(result.placed.length) : "—"} />
-              <ResultStat label="Nenaloženo" value={result ? String(result.unplaced.length) : "—"} />
+              <ResultStat
+                label="Nenaloženo"
+                value={result ? String(result.unplaced.length) : "—"}
+                alert={Boolean(result && result.unplaced.length > 0)}
+              />
               <ResultStat
                 label="Využití podlahy"
                 value={result ? `${percentFormat.format(result.floorUtilizationPercent)} %` : "—"}
@@ -563,22 +627,31 @@ export default function PackingDashboard() {
             </div>
           </section>
 
-          <section className={clsx(cardClass, "flex min-h-[520px] flex-col lg:col-span-7")}>
+          <section className={clsx(cardClass, "flex w-full flex-col lg:col-span-7")}>
             <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
-                <Boxes className={headingIconClass} />
+                <ScanBox className={headingIconClass} />
                 <h2 className="text-sm font-semibold">Náhled nákladu</h2>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-3">
                 <LegendDot color="#38bdf8" label="Na podlaze" />
                 <LegendDot color="#4ade80" label="Ve stohu" />
                 <LegendDot color="#fb923c" label="Přesah" />
+                <button
+                  type="button"
+                  onClick={() => canvasRef.current?.downloadSnapshot()}
+                  className={smallButtonClass}
+                >
+                  <Camera className="h-3.5 w-3.5" />
+                  Stáhnout snímek
+                </button>
               </div>
             </div>
-            <div className="min-h-[360px] flex-1">
-              <TruckCanvas truck={activeTruck} result={result} theme={theme} />
+            <div className="h-[min(70vh,560px)] min-h-[360px] w-full">
+              <TruckCanvas ref={canvasRef} truck={activeTruck} result={result} theme={theme} />
             </div>
           </section>
+        </div>
         </div>
       </div>
 
@@ -638,11 +711,28 @@ function LegendDot({ color, label }: { color: string; label: string }) {
   );
 }
 
-function ResultStat({ label, value }: { label: string; value: string }) {
+function ResultStat({
+  label,
+  value,
+  alert = false,
+}: {
+  label: string;
+  value: string;
+  alert?: boolean;
+}) {
   return (
     <div className={clsx(panelClass, "px-3 py-3")}>
-      <p className={labelClass}>{label}</p>
-      <p className="text-lg font-semibold tracking-tight">{value}</p>
+      <p className="text-[11px] font-semibold tracking-wider text-slate-400 uppercase dark:text-slate-500">
+        {label}
+      </p>
+      <p
+        className={clsx(
+          "text-xl font-bold",
+          alert ? "text-red-500 dark:text-red-400" : "text-slate-800 dark:text-slate-100",
+        )}
+      >
+        {value}
+      </p>
     </div>
   );
 }
