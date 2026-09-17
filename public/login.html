@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="cs">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Přihlášení – paketo.group</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f8fafc;
+        --panel: #ffffff;
+        --text: #0f172a;
+        --muted: #64748b;
+        --border: #e2e8f0;
+        --accent: #9ed843;
+        --accent-hover: #8ec738;
+        --danger: #e11d48;
+        --ring: rgba(148, 163, 184, 0.35);
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #020617;
+          --panel: #0f172a;
+          --text: #f1f5f9;
+          --muted: #94a3b8;
+          --border: #1e293b;
+          --ring: rgba(51, 65, 85, 0.8);
+        }
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        font-family: "Segoe UI", system-ui, sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(1200px 600px at 10% -10%, rgba(158, 216, 67, 0.18), transparent 55%),
+          radial-gradient(900px 500px at 100% 0%, rgba(56, 189, 248, 0.12), transparent 50%),
+          var(--bg);
+      }
+
+      .card {
+        width: 100%;
+        max-width: 400px;
+        padding: 28px;
+        border: 1px solid var(--border);
+        border-radius: 18px;
+        background: var(--panel);
+        box-shadow: 0 18px 50px rgba(15, 23, 42, 0.08);
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 1.6rem;
+        letter-spacing: -0.03em;
+      }
+
+      h1 span {
+        color: var(--accent);
+      }
+
+      p {
+        margin: 8px 0 0;
+        color: var(--muted);
+        font-size: 0.95rem;
+      }
+
+      form {
+        margin-top: 24px;
+        display: grid;
+        gap: 14px;
+      }
+
+      label {
+        display: grid;
+        gap: 6px;
+        font-size: 0.8rem;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      input {
+        width: 100%;
+        height: 44px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 0 12px;
+        font-size: 1rem;
+        color: var(--text);
+        background: transparent;
+        outline: none;
+      }
+
+      input:focus {
+        border-color: #94a3b8;
+        box-shadow: 0 0 0 3px var(--ring);
+      }
+
+      button {
+        height: 44px;
+        border: 0;
+        border-radius: 10px;
+        background: var(--accent);
+        color: #0f172a;
+        font-size: 0.95rem;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      button:hover {
+        background: var(--accent-hover);
+      }
+
+      button:disabled {
+        opacity: 0.65;
+        cursor: wait;
+      }
+
+      .error {
+        min-height: 1.25rem;
+        margin: 0;
+        color: var(--danger);
+        font-size: 0.875rem;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <h1>paketo<span>.group</span></h1>
+      <p>Zadejte heslo pro vstup do plánovače nakládky.</p>
+      <form id="login-form" autocomplete="current-password">
+        <label>
+          Heslo
+          <input
+            id="password"
+            name="password"
+            type="password"
+            required
+            autofocus
+            autocomplete="current-password"
+          />
+        </label>
+        <p class="error" id="error" role="alert" aria-live="polite"></p>
+        <button type="submit" id="submit">Přihlásit se</button>
+      </form>
+    </main>
+    <script>
+      const form = document.getElementById("login-form");
+      const passwordInput = document.getElementById("password");
+      const errorEl = document.getElementById("error");
+      const submitBtn = document.getElementById("submit");
+
+      const params = new URLSearchParams(window.location.search);
+      const nextPath = params.get("next") || "/";
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        errorEl.textContent = "";
+        submitBtn.disabled = true;
+
+        try {
+          const response = await fetch("/api/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ password: passwordInput.value }),
+          });
+
+          if (!response.ok) {
+            const data = await response.json().catch(() => ({}));
+            errorEl.textContent = data.error || "Nesprávné heslo";
+            passwordInput.select();
+            return;
+          }
+
+          window.location.replace(nextPath.startsWith("/") ? nextPath : "/");
+        } catch {
+          errorEl.textContent = "Nepodařilo se přihlásit. Zkuste to znovu.";
+        } finally {
+          submitBtn.disabled = false;
+        }
+      });
+    </script>
+  </body>
+</html>

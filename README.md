@@ -1,6 +1,22 @@
-<img width="1296" height="928" alt="image" src="https://github.com/user-attachments/assets/4728e3e6-91d0-4dfb-99f1-71371b11b644" />
+# Plánovač nakládky (paketo.group)
 
-- todo
-- nevejde se mobil
-- ctrl pro vice polozek
-- na podlahu a do stohu jinak (pliknuti kam), respektovat krehkost
+Vite + React app for planning truck loads. Deployed on Vercel.
+
+## Password gate
+
+The site is protected by a shared password (no database).
+
+- Default password: `paketoheslo01`
+- Override on Vercel with env var `SITE_PASSWORD`
+- Unauthenticated visitors are redirected to `/login.html`
+- After a correct password, an `HttpOnly` cookie unlocks the app for 30 days
+
+This gate runs via Vercel Edge Middleware + `/api/login`. It does **not** run under plain `npm run dev` — use a Vercel preview/production deploy (or `vercel dev`) to test login.
+
+## Scripts
+
+```bash
+npm install
+npm run dev
+npm run build
+```
