@@ -43,6 +43,11 @@ export function isPublicPath(pathname: string): boolean {
     pathname === "/login.html" ||
     pathname === "/api/login" ||
     pathname === "/favicon.svg" ||
-    pathname === "/favicon.ico"
+    pathname === "/favicon.ico" ||
+    // Vite / HMR internals (local only; harmless if hit on Vercel)
+    pathname.startsWith("/@") ||
+    pathname.startsWith("/node_modules/") ||
+    pathname.startsWith("/src/") ||
+    pathname === "/__vite_ping"
   );
 }
