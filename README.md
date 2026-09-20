@@ -5,7 +5,7 @@
 - 
 - barvy random (jak to vyresit s vice polozkama pro jednu znacku)
 - barvy pri snimku, legenda, pocet jednotlivych
-
+- 
 - Zmeny:
 - tlacitko na mobilu
 - pri mensim nedodelavat
