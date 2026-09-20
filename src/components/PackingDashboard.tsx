@@ -3,6 +3,8 @@ import clsx from "clsx";
 import {
   Calculator,
   Camera,
+  Check,
+  ChevronDown,
   ClipboardList,
   Download,
   Moon,
@@ -14,27 +16,35 @@ import {
   Trash2,
   Truck,
   Upload,
+  X,
 } from "lucide-react";
 import TruckCanvas, { type TruckCanvasHandle } from "./TruckCanvas";
 import {
   packTruck,
-  tryNudgePlacedItem,
-  tryRotatePlacedItem,
-  tryTogglePlacedElevation,
+  findFloorPlacementTargets,
+  findStackPlacementTargets,
+  tryMovePlacedItemTo,
+  tryNudgePlacedItems,
+  tryRotatePlacedItems,
   updatePlacedItems,
   type CargoItem,
   type PackingResult,
+  type PlacementTarget,
   type TruckSpec,
 } from "../lib/packer";
 import {
+  CARGO_KEY,
+  DEFAULT_CARGO_PRESETS,
   DEFAULT_PALLETS,
   DEFAULT_TRUCKS,
+  isCargoList,
   isPalletList,
   isTruckList,
   loadPresets,
   newPresetId,
   PALLETS_KEY,
   TRUCKS_KEY,
+  type CargoPreset,
   type PalletPreset,
   type PresetBundle,
 } from "../lib/presets";
@@ -48,7 +58,8 @@ interface QueueEntry {
   cargoWidth: number;
   cargoLength: number;
   height: number;
-  stackable: boolean;
+  canBeOnTop: boolean;
+  canSupportTop: boolean;
   quantity: number;
 }
 
@@ -64,13 +75,13 @@ const labelClass =
   "mb-1 block text-xs font-medium tracking-wide text-slate-500 uppercase dark:text-slate-400";
 
 const cardClass =
-  "rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900";
+  "max-w-full overflow-x-clip rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900";
 
 const panelClass =
   "rounded-lg border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/50";
 
 const addToLoadButtonClass =
-  "inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-lg border border-transparent bg-slate-900 px-4 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700";
+  "inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-transparent bg-slate-900 px-4 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800 md:ml-auto md:w-auto md:flex-1 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700";
 
 const calculateButtonClass =
   "inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#9ed843] px-4 py-2.5 text-sm font-semibold text-slate-950 shadow-sm transition-all hover:bg-[#8ec738] active:scale-[0.99] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 disabled:shadow-none disabled:hover:bg-slate-100 disabled:active:scale-100 dark:disabled:bg-slate-800/50 dark:disabled:text-slate-500 dark:disabled:hover:bg-slate-800/50";
@@ -90,6 +101,10 @@ function usableSize(value: number): number {
   return Number.isFinite(value) && value > 0 ? Math.round(value) : 1;
 }
 
+function isPositiveSize(value: number): boolean {
+  return Number.isFinite(value) && value > 0;
+}
+
 /** Disabled colours are picked here rather than stacked as variants, to keep the cascade unambiguous. */
 function fieldClass(disabled = false): string {
   return clsx(
@@ -97,6 +112,37 @@ function fieldClass(disabled = false): string {
     disabled
       ? "bg-slate-50 text-slate-500 dark:bg-slate-900/60 dark:text-slate-500"
       : "bg-white text-slate-900 dark:bg-slate-950 dark:text-slate-100",
+  );
+}
+
+function PresetSelect({
+  value,
+  onChange,
+  disabled = false,
+  children,
+  className,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  disabled?: boolean;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={clsx("relative", className)}>
+      <select
+        value={value}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.value)}
+        className={clsx(fieldClass(disabled), "appearance-none bg-none pr-10")}
+      >
+        {children}
+      </select>
+      <ChevronDown
+        className="pointer-events-none absolute top-1/2 right-3.5 h-4 w-4 -translate-y-1/2 text-slate-400 dark:text-slate-500"
+        aria-hidden
+      />
+    </div>
   );
 }
 
@@ -136,9 +182,9 @@ function NumberField({
   };
 
   return (
-    <label className="block">
-      <span className={labelClass}>{label}</span>
-      <div className="relative">
+    <label className="block min-w-0">
+      <span className={clsx(labelClass, "leading-tight")}>{label}</span>
+      <div className="relative min-w-0">
         <input
           type="number"
           inputMode="numeric"
@@ -149,7 +195,7 @@ function NumberField({
           value={text}
           onChange={(event) => handleChange(event.target.value)}
           onBlur={handleBlur}
-          className={clsx(fieldClass(disabled), suffix && "pr-10")}
+          className={clsx(fieldClass(disabled), "min-w-0", suffix && "pr-10")}
         />
         {suffix ? (
           <span
@@ -163,6 +209,38 @@ function NumberField({
         ) : null}
       </div>
     </label>
+  );
+}
+
+function StackChip({
+  label,
+  checked,
+  onChange,
+  className,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      title={label}
+      onClick={() => onChange(!checked)}
+      className={clsx(
+        "flex min-h-10 min-w-0 cursor-pointer items-center justify-center gap-1 rounded-lg border px-2.5 text-center text-xs leading-tight transition-colors md:h-10 md:gap-1.5 md:px-3 md:whitespace-nowrap",
+        checked
+          ? "border-[#9ed843]/40 bg-[#9ed843]/15 font-medium text-[#9ed843]"
+          : "border-slate-200 bg-slate-100 text-slate-500 hover:border-slate-300 dark:border-slate-700/60 dark:bg-[#1a2433] dark:text-slate-400 dark:hover:border-slate-600",
+        className,
+      )}
+    >
+      {checked ? <Check className="h-3.5 w-3.5 shrink-0" strokeWidth={2.5} /> : null}
+      <span className="min-w-0 text-balance">{label}</span>
+    </button>
   );
 }
 
@@ -210,6 +288,9 @@ export default function PackingDashboard() {
   const [pallets, setPallets] = useState<PalletPreset[]>(() =>
     loadPresets(PALLETS_KEY, DEFAULT_PALLETS, isPalletList),
   );
+  const [cargoPresets, setCargoPresets] = useState<CargoPreset[]>(() =>
+    loadPresets(CARGO_KEY, DEFAULT_CARGO_PRESETS, isCargoList),
+  );
 
   const [selectedTruckId, setSelectedTruckId] = useState(() => trucks[0]?.id ?? "");
   const [customTruck, setCustomTruck] = useState(trucks.length === 0);
@@ -218,17 +299,24 @@ export default function PackingDashboard() {
   const [truckHeight, setTruckHeight] = useState(trucks[0]?.innerHeight ?? 2700);
 
   const [selectedPalletId, setSelectedPalletId] = useState(pallets[0]?.id ?? "custom");
+  const [selectedCargoId, setSelectedCargoId] = useState("custom");
   const [palletWidth, setPalletWidth] = useState(pallets[0]?.width ?? 800);
   const [palletLength, setPalletLength] = useState(pallets[0]?.length ?? 1200);
   const [cargoWidth, setCargoWidth] = useState(pallets[0]?.width ?? 800);
   const [cargoLength, setCargoLength] = useState(pallets[0]?.length ?? 1200);
   const [cargoHeight, setCargoHeight] = useState(1400);
-  const [stackable, setStackable] = useState(true);
+  const [canBeOnTop, setCanBeOnTop] = useState(true);
+  const [canSupportTop, setCanSupportTop] = useState(true);
   const [quantity, setQuantity] = useState(1);
+  const [cargoSaveOpen, setCargoSaveOpen] = useState(false);
+  const [cargoSaveName, setCargoSaveName] = useState("");
+  const [cargoSaveError, setCargoSaveError] = useState("");
+  const cargoSaveInputRef = useRef<HTMLInputElement>(null);
 
   const [queue, setQueue] = useState<QueueEntry[]>([]);
   const [result, setResult] = useState<PackingResult | null>(null);
-  const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null);
+  const [selectedUnitIds, setSelectedUnitIds] = useState<string[]>([]);
+  const [placementMode, setPlacementMode] = useState<"floor" | "stack" | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const importRef = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<TruckCanvasHandle>(null);
@@ -246,6 +334,31 @@ export default function PackingDashboard() {
   useEffect(() => {
     localStorage.setItem(PALLETS_KEY, JSON.stringify(pallets));
   }, [pallets]);
+
+  useEffect(() => {
+    localStorage.setItem(CARGO_KEY, JSON.stringify(cargoPresets));
+  }, [cargoPresets]);
+
+  useEffect(() => {
+    if (!cargoSaveOpen) return;
+    cargoSaveInputRef.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setCargoSaveOpen(false);
+        setCargoSaveName("");
+        setCargoSaveError("");
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [cargoSaveOpen]);
+
+  useEffect(() => {
+    if (result) return;
+    setSelectedUnitIds((ids) => (ids.length === 0 ? ids : []));
+    setPlacementMode((mode) => (mode === null ? mode : null));
+  }, [result]);
 
   const changeTheme = (next: Theme) => {
     setTheme(next);
@@ -272,7 +385,28 @@ export default function PackingDashboard() {
     setPalletLength(pallet.length);
     setCargoWidth(pallet.width);
     setCargoLength(pallet.length);
+    setSelectedCargoId("custom");
   }, []);
+
+  const applyCargoPreset = useCallback(
+    (preset: CargoPreset) => {
+      setSelectedCargoId(preset.id);
+      setPalletLength(preset.palletLength);
+      setPalletWidth(preset.palletWidth);
+      setCargoLength(preset.cargoLength);
+      setCargoWidth(preset.cargoWidth);
+      setCargoHeight(preset.cargoHeight);
+      setCanBeOnTop(preset.defaultCanBeOnTop);
+      setCanSupportTop(preset.defaultCanSupportTop);
+      const matchingPallet = pallets.find(
+        (pallet) => pallet.length === preset.palletLength && pallet.width === preset.palletWidth,
+      );
+      setSelectedPalletId(matchingPallet?.id ?? "custom");
+    },
+    [pallets],
+  );
+
+  const markCargoCustom = () => setSelectedCargoId("custom");
 
   const onTruckSelect = (id: string) => {
     const truck = trucks.find((item) => item.id === id);
@@ -284,16 +418,66 @@ export default function PackingDashboard() {
   const onPalletSelect = (id: string) => {
     if (id === "custom") {
       setSelectedPalletId("custom");
+      markCargoCustom();
       return;
     }
     const pallet = pallets.find((item) => item.id === id);
     if (pallet) applyPalletPreset(pallet);
   };
 
+  const onCargoSelect = (id: string) => {
+    if (id === "custom") {
+      setSelectedCargoId("custom");
+      return;
+    }
+    const preset = cargoPresets.find((item) => item.id === id);
+    if (preset) applyCargoPreset(preset);
+  };
+
+  const cancelCargoSave = () => {
+    setCargoSaveOpen(false);
+    setCargoSaveName("");
+    setCargoSaveError("");
+  };
+
+  const confirmCargoSave = () => {
+    const name = cargoSaveName.trim();
+    if (!name) {
+      setCargoSaveError("Zadejte název předvolby.");
+      return;
+    }
+    if (
+      ![palletLength, palletWidth, cargoLength, cargoWidth, cargoHeight].every(isPositiveSize)
+    ) {
+      setCargoSaveError("Rozměry musí být kladná čísla.");
+      return;
+    }
+    const preset: CargoPreset = {
+      id: newPresetId("cargo"),
+      name,
+      palletLength: usableSize(palletLength),
+      palletWidth: usableSize(palletWidth),
+      cargoLength: usableSize(cargoLength),
+      cargoWidth: usableSize(cargoWidth),
+      cargoHeight: usableSize(cargoHeight),
+      defaultCanBeOnTop: canBeOnTop,
+      defaultCanSupportTop: canSupportTop,
+    };
+    setCargoPresets((current) => [...current, preset]);
+    setSelectedCargoId(preset.id);
+    cancelCargoSave();
+  };
+
   const addToLoad = () => {
     const qty = Math.max(1, Math.floor(quantity) || 1);
+    const cargo = cargoPresets.find((item) => item.id === selectedCargoId);
     const pallet = pallets.find((item) => item.id === selectedPalletId);
-    const name = pallet && selectedPalletId !== "custom" ? pallet.name : "Vlastní paleta";
+    const name =
+      cargo && selectedCargoId !== "custom"
+        ? cargo.name
+        : pallet && selectedPalletId !== "custom"
+          ? pallet.name
+          : "Vlastní paleta";
     setQueue((current) => [
       ...current,
       {
@@ -304,7 +488,8 @@ export default function PackingDashboard() {
         cargoWidth: usableSize(cargoWidth),
         cargoLength: usableSize(cargoLength),
         height: usableSize(cargoHeight),
-        stackable,
+        canBeOnTop,
+        canSupportTop,
         quantity: qty,
       },
     ]);
@@ -337,17 +522,54 @@ export default function PackingDashboard() {
         cargoWidth: entry.cargoWidth,
         cargoLength: entry.cargoLength,
         height: entry.height,
-        stackable: entry.stackable,
+        canBeOnTop: entry.canBeOnTop,
+        canSupportTop: entry.canSupportTop,
       })),
     );
     setResult(packTruck(activeTruck, items));
-    setSelectedUnitId(null);
+    setSelectedUnitIds([]);
+    setPlacementMode(null);
   };
 
-  const nudgeSelected = (id: string, delta: { dx?: number; dy?: number; dz?: number }): boolean => {
+  const liveSelectedIds = useMemo(
+    () => selectedUnitIds.filter((id) => result?.placed.some((item) => item.id === id)),
+    [selectedUnitIds, result],
+  );
+
+  const placementTargets = useMemo<PlacementTarget[]>(() => {
+    if (!result || !placementMode || liveSelectedIds.length !== 1) return [];
+    const item = result.placed.find((entry) => entry.id === liveSelectedIds[0]);
+    if (!item) return [];
+    return placementMode === "floor"
+      ? findFloorPlacementTargets(activeTruck, result.placed, item)
+      : findStackPlacementTargets(activeTruck, result.placed, item);
+  }, [result, placementMode, liveSelectedIds, activeTruck]);
+
+  const cancelPlacement = () => setPlacementMode(null);
+
+  const startPlacement = (mode: "floor" | "stack") => {
+    if (liveSelectedIds.length !== 1) return;
+    const item = result?.placed.find((entry) => entry.id === liveSelectedIds[0]);
+    if (mode === "stack" && item?.canBeOnTop === false) return;
+    setPlacementMode((current) => (current === mode ? null : mode));
+  };
+
+  const selectPlacementTarget = (target: PlacementTarget) => {
+    const current = resultRef.current;
+    const id = liveSelectedIds[0];
+    if (!current || !id) return;
+    const next = tryMovePlacedItemTo(activeTruck, current.placed, id, target);
+    if (!next) return;
+    const updated = updatePlacedItems(activeTruck, current, next);
+    resultRef.current = updated;
+    setResult(updated);
+    setPlacementMode(null);
+  };
+
+  const nudgeSelected = (ids: string[], delta: { dx?: number; dy?: number; dz?: number }): boolean => {
     const current = resultRef.current;
     if (!current) return false;
-    const next = tryNudgePlacedItem(activeTruck, current.placed, id, delta);
+    const next = tryNudgePlacedItems(activeTruck, current.placed, ids, delta);
     if (!next) return false;
     const updated = updatePlacedItems(activeTruck, current, next);
     resultRef.current = updated;
@@ -355,20 +577,17 @@ export default function PackingDashboard() {
     return true;
   };
 
-  const rotateSelected = (id: string) => {
+  const rotateSelected = (ids: string[]) => {
     setResult((current) => {
       if (!current) return current;
-      const next = tryRotatePlacedItem(activeTruck, current.placed, id);
+      const next = tryRotatePlacedItems(activeTruck, current.placed, ids);
       return next ? updatePlacedItems(activeTruck, current, next) : current;
     });
   };
 
-  const toggleSelectedElevation = (id: string) => {
-    setResult((current) => {
-      if (!current) return current;
-      const next = tryTogglePlacedElevation(activeTruck, current.placed, id);
-      return next ? updatePlacedItems(activeTruck, current, next) : current;
-    });
+  const changeSelectedUnitIds = (ids: string[]) => {
+    setSelectedUnitIds(ids);
+    if (ids.length !== 1) setPlacementMode(null);
   };
 
   const queuedCount = queue.reduce((sum, entry) => sum + entry.quantity, 0);
@@ -383,7 +602,7 @@ export default function PackingDashboard() {
   }, [result]);
 
   const exportPresets = () => {
-    const payload: PresetBundle = { trucks, pallets };
+    const payload: PresetBundle = { trucks, pallets, cargo: cargoPresets };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -407,6 +626,10 @@ export default function PackingDashboard() {
         setPallets(data.pallets);
         const first = data.pallets[0];
         if (first) applyPalletPreset(first);
+      }
+      if (isCargoList(data.cargo)) {
+        setCargoPresets(data.cargo);
+        setSelectedCargoId("custom");
       }
     } catch {
       /* neplatný JSON ignorujeme */
@@ -441,66 +664,81 @@ export default function PackingDashboard() {
               <Truck className={headingIconClass} />
               <h2 className="text-sm font-semibold">Vozidlo</h2>
             </div>
-            <div className="space-y-4">
-              <label className="block">
-                <span className={labelClass}>Předvolba</span>
-                <select
-                  value={selectedTruckId}
-                  onChange={(event) => onTruckSelect(event.target.value)}
-                  disabled={customTruck || trucks.length === 0}
-                  className={fieldClass(customTruck || trucks.length === 0)}
-                >
-                  {trucks.length === 0 ? <option value="">Žádné předvolby</option> : null}
-                  {trucks.map((truck) => (
-                    <option key={truck.id} value={truck.id}>
-                      {truck.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <Toggle
-                label="Vlastní rozměry"
-                checked={customTruck}
-                onChange={(next) => {
-                  setCustomTruck(next);
-                  setResult(null);
-                  if (!next && selectedTruck) applyTruckPreset(selectedTruck);
-                }}
-              />
-              <div className="grid grid-cols-3 gap-2">
-                <NumberField
-                  label="Délka"
-                  value={truckLength}
-                  onChange={(value) => {
-                    setTruckLength(value);
-                    setResult(null);
-                  }}
-                  disabled={!customTruck}
-                />
-                <NumberField
-                  label="Šířka"
-                  value={truckWidth}
-                  onChange={(value) => {
-                    setTruckWidth(value);
-                    setResult(null);
-                  }}
-                  disabled={!customTruck}
-                />
-                <NumberField
-                  label="Výška"
-                  value={truckHeight}
-                  onChange={(value) => {
-                    setTruckHeight(value);
-                    setResult(null);
-                  }}
-                  disabled={!customTruck}
-                />
+            <div className="flex min-h-0 flex-1 flex-col">
+              <div className="flex flex-col gap-3.5">
+                <label className="block">
+                  <span className={labelClass}>Předvolba</span>
+                  <PresetSelect
+                    value={selectedTruckId}
+                    onChange={onTruckSelect}
+                    disabled={customTruck || trucks.length === 0}
+                  >
+                    {trucks.length === 0 ? <option value="">Žádné předvolby</option> : null}
+                    {trucks.map((truck) => (
+                      <option key={truck.id} value={truck.id}>
+                        {truck.name}
+                      </option>
+                    ))}
+                  </PresetSelect>
+                </label>
+                <div>
+                  <span className={clsx(labelClass, "invisible")} aria-hidden>
+                    Režim
+                  </span>
+                  <Toggle
+                    label="Vlastní rozměry"
+                    checked={customTruck}
+                    onChange={(next) => {
+                      setCustomTruck(next);
+                      setResult(null);
+                      if (!next && selectedTruck) applyTruckPreset(selectedTruck);
+                    }}
+                  />
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <NumberField
+                    label="Délka"
+                    value={truckLength}
+                    onChange={(value) => {
+                      setTruckLength(value);
+                      setResult(null);
+                    }}
+                    disabled={!customTruck}
+                  />
+                  <NumberField
+                    label="Šířka"
+                    value={truckWidth}
+                    onChange={(value) => {
+                      setTruckWidth(value);
+                      setResult(null);
+                    }}
+                    disabled={!customTruck}
+                  />
+                  <NumberField
+                    label="Výška"
+                    value={truckHeight}
+                    onChange={(value) => {
+                      setTruckHeight(value);
+                      setResult(null);
+                    }}
+                    disabled={!customTruck}
+                  />
+                </div>
               </div>
-              {!customTruck ? (
-                <p className={clsx("text-xs", mutedClass)}>
-                  Používají se vnitřní rozměry předvolby {selectedTruck?.name ?? "—"}.
+              <div className="mt-auto flex items-end pt-4">
+                <p
+                  className={clsx(
+                    "flex h-10 items-center text-xs",
+                    mutedClass,
+                    !customTruck &&
+                      "rounded-lg border border-slate-200/80 bg-slate-50 px-3 dark:border-slate-700/60 dark:bg-slate-800/50",
+                  )}
+                >
+                  {!customTruck
+                    ? `Používají se vnitřní rozměry předvolby ${selectedTruck?.name ?? "—"}.`
+                    : null}
                 </p>
-              ) : null}
+              </div>
             </div>
           </section>
 
@@ -509,23 +747,102 @@ export default function PackingDashboard() {
               <Package className={headingIconClass} />
               <h2 className="text-sm font-semibold">Náklad</h2>
             </div>
-            <div className="flex h-full min-h-0 flex-1 flex-col">
-              <div className="flex flex-col gap-4">
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+            <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
+              <div className="flex flex-col gap-3.5">
+                <div>
+                  <span className={labelClass}>Předvolba nákladu</span>
+                  <div className="flex items-center gap-2">
+                    <PresetSelect
+                      value={selectedCargoId}
+                      onChange={onCargoSelect}
+                      className="min-w-0 flex-1"
+                    >
+                      <option value="custom">Vlastní náklad / Bez předvolby</option>
+                      {cargoPresets.map((preset) => (
+                        <option key={preset.id} value={preset.id}>
+                          {preset.name}
+                        </option>
+                      ))}
+                    </PresetSelect>
+                    <button
+                      type="button"
+                      title="Uložit aktuální rozměry jako předvolbu"
+                      aria-label="Uložit aktuální rozměry jako předvolbu"
+                      aria-expanded={cargoSaveOpen}
+                      onClick={() => {
+                        if (cargoSaveOpen) {
+                          cancelCargoSave();
+                          return;
+                        }
+                        setCargoSaveOpen(true);
+                        setCargoSaveError("");
+                      }}
+                      className={clsx(
+                        "inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border text-sm transition",
+                        cargoSaveOpen
+                          ? "border-[#9ed843]/40 bg-[#9ed843]/15 text-[#9ed843]"
+                          : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300 dark:hover:bg-slate-800",
+                      )}
+                    >
+                      <Plus className="h-4 w-4" />
+                    </button>
+                  </div>
+                  {cargoSaveOpen ? (
+                    <div className="mt-2 flex items-center gap-2">
+                      <input
+                        ref={cargoSaveInputRef}
+                        value={cargoSaveName}
+                        onChange={(event) => {
+                          setCargoSaveName(event.target.value);
+                          if (cargoSaveError) setCargoSaveError("");
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            confirmCargoSave();
+                          }
+                        }}
+                        placeholder="Karton A4 na EUR"
+                        aria-label="Název předvolby nákladu"
+                        className={clsx(fieldClass(), "flex-1")}
+                      />
+                      <button
+                        type="button"
+                        title="Uložit"
+                        aria-label="Uložit předvolbu"
+                        onClick={confirmCargoSave}
+                        className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[#9ed843]/40 bg-[#9ed843]/15 text-[#9ed843] transition hover:bg-[#9ed843]/25"
+                      >
+                        <Check className="h-4 w-4" strokeWidth={2.5} />
+                      </button>
+                      <button
+                        type="button"
+                        title="Zrušit"
+                        aria-label="Zrušit ukládání"
+                        onClick={cancelCargoSave}
+                        className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ) : null}
+                  {cargoSaveError ? (
+                    <p className="mt-1.5 text-xs font-medium text-rose-500 dark:text-rose-400">
+                      {cargoSaveError}
+                    </p>
+                  ) : null}
+                </div>
+                <div className="grid min-w-0 grid-cols-1 gap-3 md:grid-cols-4">
                   <label className="md:col-span-2">
                     <span className={labelClass}>Předvolba palety</span>
-                    <select
-                      value={selectedPalletId}
-                      onChange={(event) => onPalletSelect(event.target.value)}
-                      className={fieldClass()}
-                    >
+                    <PresetSelect value={selectedPalletId} onChange={onPalletSelect}>
                       {pallets.map((pallet) => (
                         <option key={pallet.id} value={pallet.id}>
                           {pallet.name} ({pallet.length} × {pallet.width})
                         </option>
                       ))}
                       <option value="custom">Vlastní paleta</option>
-                    </select>
+                    </PresetSelect>
                   </label>
                   <NumberField
                     label="Délka palety"
@@ -533,6 +850,7 @@ export default function PackingDashboard() {
                     onChange={(value) => {
                       setPalletLength(value);
                       setSelectedPalletId("custom");
+                      markCargoCustom();
                     }}
                   />
                   <NumberField
@@ -541,29 +859,69 @@ export default function PackingDashboard() {
                     onChange={(value) => {
                       setPalletWidth(value);
                       setSelectedPalletId("custom");
+                      markCargoCustom();
                     }}
                   />
                 </div>
-                <div className="grid grid-cols-3 gap-3">
-                  <NumberField label="Délka nákladu" value={cargoLength} onChange={setCargoLength} />
-                  <NumberField label="Šířka nákladu" value={cargoWidth} onChange={setCargoWidth} />
-                  <NumberField label="Výška nákladu" value={cargoHeight} onChange={setCargoHeight} />
-                </div>
-              </div>
-              <div className="mt-auto flex w-full items-end gap-3 pt-4">
-                <div className="w-32 shrink-0">
+                <div className="grid min-w-0 grid-cols-1 gap-3 min-[520px]:grid-cols-3">
                   <NumberField
-                    label="Počet"
-                    value={quantity}
-                    onChange={setQuantity}
-                    min={1}
-                    step={1}
-                    suffix=""
+                    label="Délka nákladu"
+                    value={cargoLength}
+                    onChange={(value) => {
+                      setCargoLength(value);
+                      markCargoCustom();
+                    }}
+                  />
+                  <NumberField
+                    label="Šířka nákladu"
+                    value={cargoWidth}
+                    onChange={(value) => {
+                      setCargoWidth(value);
+                      markCargoCustom();
+                    }}
+                  />
+                  <NumberField
+                    label="Výška nákladu"
+                    value={cargoHeight}
+                    onChange={(value) => {
+                      setCargoHeight(value);
+                      markCargoCustom();
+                    }}
                   />
                 </div>
-                <div className="shrink-0">
-                  <span className={labelClass}>Stohování</span>
-                  <Toggle label="Stohovatelné" checked={stackable} onChange={setStackable} />
+              </div>
+              <div className="mt-auto flex w-full min-w-0 flex-col gap-2.5 pt-4 md:flex-row md:items-end md:gap-2">
+                <div className="flex w-full min-w-0 flex-wrap items-end gap-2 md:w-auto md:flex-nowrap">
+                  <div className="w-24 shrink-0">
+                    <NumberField
+                      label="Počet"
+                      value={quantity}
+                      onChange={setQuantity}
+                      min={1}
+                      step={1}
+                      suffix=""
+                    />
+                  </div>
+                  <div className="flex min-w-0 flex-1 flex-nowrap items-stretch gap-2 md:flex-none">
+                    <StackChip
+                      className="flex-1 md:flex-none"
+                      label="Může do stohu"
+                      checked={canBeOnTop}
+                      onChange={(next) => {
+                        setCanBeOnTop(next);
+                        markCargoCustom();
+                      }}
+                    />
+                    <StackChip
+                      className="flex-1 md:flex-none"
+                      label="Lze na ni stohovat"
+                      checked={canSupportTop}
+                      onChange={(next) => {
+                        setCanSupportTop(next);
+                        markCargoCustom();
+                      }}
+                    />
+                  </div>
                 </div>
                 <button type="button" onClick={addToLoad} className={addToLoadButtonClass}>
                   <Plus className="h-4 w-4" />
@@ -623,7 +981,8 @@ export default function PackingDashboard() {
                       </div>
                       <p className={clsx("mt-1 text-xs", mutedClass)}>
                         Počet {entry.quantity}
-                        {entry.stackable ? " · Stohovatelné" : " · Nestohovatelné"}
+                        {entry.canBeOnTop ? " · Může do stohu" : " · Jen na podlaze"}
+                        {entry.canSupportTop ? " · Lze na ni stohovat" : " · Nelze na ni stohovat"}
                       </p>
                     </div>
                     <div className="flex shrink-0 flex-col items-end gap-1">
@@ -697,15 +1056,15 @@ export default function PackingDashboard() {
                 truck={activeTruck}
                 result={result}
                 theme={theme}
-                selectedUnitId={
-                  selectedUnitId && result?.placed.some((item) => item.id === selectedUnitId)
-                    ? selectedUnitId
-                    : null
-                }
-                onSelectedUnitIdChange={setSelectedUnitId}
+                selectedUnitIds={liveSelectedIds}
+                onSelectedUnitIdsChange={changeSelectedUnitIds}
                 onNudge={nudgeSelected}
                 onRotate={rotateSelected}
-                onToggleElevation={toggleSelectedElevation}
+                placementMode={placementMode}
+                placementTargets={placementTargets}
+                onStartPlacement={startPlacement}
+                onSelectPlacementTarget={selectPlacementTarget}
+                onCancelPlacement={cancelPlacement}
               />
             </div>
           </section>
@@ -717,6 +1076,7 @@ export default function PackingDashboard() {
         <SettingsModal
           trucks={trucks}
           pallets={pallets}
+          cargoPresets={cargoPresets}
           theme={theme}
           onThemeChange={changeTheme}
           onClose={() => setSettingsOpen(false)}
@@ -736,6 +1096,12 @@ export default function PackingDashboard() {
             const stillSelected = next.find((pallet) => pallet.id === selectedPalletId);
             if (stillSelected) applyPalletPreset(stillSelected);
             else if (selectedPalletId !== "custom") setSelectedPalletId("custom");
+          }}
+          onCargoChange={(next) => {
+            setCargoPresets(next);
+            const stillSelected = next.find((preset) => preset.id === selectedCargoId);
+            if (stillSelected) applyCargoPreset(stillSelected);
+            else if (selectedCargoId !== "custom") setSelectedCargoId("custom");
           }}
           onExport={exportPresets}
           onImportClick={() => importRef.current?.click()}
@@ -851,27 +1217,32 @@ function ResultStat({
 function SettingsModal({
   trucks,
   pallets,
+  cargoPresets,
   theme,
   onThemeChange,
   onClose,
   onTrucksChange,
   onPalletsChange,
+  onCargoChange,
   onExport,
   onImportClick,
 }: {
   trucks: TruckSpec[];
   pallets: PalletPreset[];
+  cargoPresets: CargoPreset[];
   theme: Theme;
   onThemeChange: (theme: Theme) => void;
   onClose: () => void;
   onTrucksChange: (trucks: TruckSpec[]) => void;
   onPalletsChange: (pallets: PalletPreset[]) => void;
+  onCargoChange: (cargo: CargoPreset[]) => void;
   onExport: () => void;
   onImportClick: () => void;
 }) {
-  const [tab, setTab] = useState<"trucks" | "pallets">("trucks");
+  const [tab, setTab] = useState<"trucks" | "pallets" | "cargo">("trucks");
   const [editingTruck, setEditingTruck] = useState<TruckSpec | null>(null);
   const [editingPallet, setEditingPallet] = useState<PalletPreset | null>(null);
+  const [editingCargo, setEditingCargo] = useState<CargoPreset | null>(null);
   const isDark = theme === "dark";
 
   useEffect(() => {
@@ -895,7 +1266,7 @@ function SettingsModal({
           <div>
             <h2 className="text-lg font-semibold">Nastavení</h2>
             <p className="text-sm text-slate-500 dark:text-slate-400">
-              Správa předvoleb vozidel a palet
+              Správa předvoleb vozidel, palet a nákladu
             </p>
           </div>
           <button
@@ -924,12 +1295,15 @@ function SettingsModal({
           </button>
         </div>
 
-        <div className="flex gap-2 border-b border-slate-200 px-5 py-3 dark:border-slate-800">
+        <div className="flex flex-wrap gap-2 border-b border-slate-200 px-5 py-3 dark:border-slate-800">
           <TabButton active={tab === "trucks"} onClick={() => setTab("trucks")}>
             Vozidla
           </TabButton>
           <TabButton active={tab === "pallets"} onClick={() => setTab("pallets")}>
             Palety
+          </TabButton>
+          <TabButton active={tab === "cargo"} onClick={() => setTab("cargo")}>
+            Šablony nákladu
           </TabButton>
           <div className="ml-auto flex gap-2">
             <button type="button" onClick={onExport} className={smallButtonClass}>
@@ -990,7 +1364,7 @@ function SettingsModal({
                 `${item.innerLength} × ${item.innerWidth} × ${item.innerHeight} mm`
               }
             />
-          ) : (
+          ) : tab === "pallets" ? (
             <PresetEditor
               items={pallets}
               onChange={onPalletsChange}
@@ -1027,6 +1401,101 @@ function SettingsModal({
                 </>
               )}
               summary={(item) => `${item.length} × ${item.width} mm`}
+            />
+          ) : (
+            <PresetEditor
+              items={cargoPresets}
+              onChange={onCargoChange}
+              editing={editingCargo}
+              setEditing={setEditingCargo}
+              canSave={(draft) =>
+                draft.name.trim().length > 0 &&
+                [
+                  draft.palletLength,
+                  draft.palletWidth,
+                  draft.cargoLength,
+                  draft.cargoWidth,
+                  draft.cargoHeight,
+                ].every(isPositiveSize)
+              }
+              blank={() => ({
+                id: newPresetId("cargo"),
+                name: "",
+                palletLength: 1200,
+                palletWidth: 800,
+                cargoLength: 1200,
+                cargoWidth: 800,
+                cargoHeight: 1400,
+                defaultCanBeOnTop: true,
+                defaultCanSupportTop: true,
+              })}
+              renderFields={(draft, setDraft) => (
+                <>
+                  <label className="block">
+                    <span className={labelClass}>Název</span>
+                    <input
+                      value={draft.name}
+                      onChange={(event) => setDraft({ ...draft, name: event.target.value })}
+                      className={fieldClass()}
+                    />
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <NumberField
+                      label="Délka palety"
+                      value={draft.palletLength}
+                      onChange={(palletLength) => setDraft({ ...draft, palletLength })}
+                      min={1}
+                    />
+                    <NumberField
+                      label="Šířka palety"
+                      value={draft.palletWidth}
+                      onChange={(palletWidth) => setDraft({ ...draft, palletWidth })}
+                      min={1}
+                    />
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <NumberField
+                      label="Délka nákladu"
+                      value={draft.cargoLength}
+                      onChange={(cargoLength) => setDraft({ ...draft, cargoLength })}
+                      min={1}
+                    />
+                    <NumberField
+                      label="Šířka nákladu"
+                      value={draft.cargoWidth}
+                      onChange={(cargoWidth) => setDraft({ ...draft, cargoWidth })}
+                      min={1}
+                    />
+                    <NumberField
+                      label="Výška nákladu"
+                      value={draft.cargoHeight}
+                      onChange={(cargoHeight) => setDraft({ ...draft, cargoHeight })}
+                      min={1}
+                    />
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Toggle
+                      label="Může do stohu"
+                      checked={draft.defaultCanBeOnTop}
+                      onChange={(defaultCanBeOnTop) => setDraft({ ...draft, defaultCanBeOnTop })}
+                    />
+                    <Toggle
+                      label="Lze na ni stohovat"
+                      checked={draft.defaultCanSupportTop}
+                      onChange={(defaultCanSupportTop) =>
+                        setDraft({ ...draft, defaultCanSupportTop })
+                      }
+                    />
+                  </div>
+                </>
+              )}
+              summary={(item) => {
+                const stackBits = [
+                  item.defaultCanBeOnTop ? "Může do stohu" : "Jen na podlaze",
+                  item.defaultCanSupportTop ? "Lze na ni stohovat" : "Nelze na ni stohovat",
+                ];
+                return `d ${item.cargoLength} × š ${item.cargoWidth} × v ${item.cargoHeight} mm · ${stackBits.join(" · ")}`;
+              }}
             />
           )}
         </div>
@@ -1068,6 +1537,7 @@ function PresetEditor<T extends { id: string; name: string }>({
   blank,
   renderFields,
   summary,
+  canSave,
 }: {
   items: T[];
   onChange: (items: T[]) => void;
@@ -1076,14 +1546,19 @@ function PresetEditor<T extends { id: string; name: string }>({
   blank: () => T;
   renderFields: (draft: T, setDraft: (item: T) => void) => ReactNode;
   summary: (item: T) => string;
+  canSave?: (draft: T) => boolean;
 }) {
   const isNew = editing ? !items.some((item) => item.id === editing.id) : false;
 
   const save = () => {
-    if (!editing || !editing.name.trim()) return;
+    if (!editing) return;
+    const allowed = canSave ? canSave(editing) : Boolean(editing.name.trim());
+    if (!allowed) return;
     const next = isNew
-      ? [...items, editing]
-      : items.map((item) => (item.id === editing.id ? editing : item));
+      ? [...items, { ...editing, name: editing.name.trim() }]
+      : items.map((item) =>
+          item.id === editing.id ? { ...editing, name: editing.name.trim() } : item,
+        );
     onChange(next);
     setEditing(null);
   };
@@ -1111,6 +1586,7 @@ function PresetEditor<T extends { id: string; name: string }>({
               <button
                 type="button"
                 onClick={() => {
+                  if (!window.confirm(`Opravdu smazat předvolbu „${item.name}“?`)) return;
                   onChange(items.filter((entry) => entry.id !== item.id));
                   if (editing?.id === item.id) setEditing(null);
                 }}

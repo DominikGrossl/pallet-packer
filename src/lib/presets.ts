@@ -7,13 +7,27 @@ export interface PalletPreset {
   length: number;
 }
 
+export interface CargoPreset {
+  id: string;
+  name: string;
+  palletLength: number;
+  palletWidth: number;
+  cargoLength: number;
+  cargoWidth: number;
+  cargoHeight: number;
+  defaultCanBeOnTop: boolean;
+  defaultCanSupportTop: boolean;
+}
+
 export interface PresetBundle {
   trucks: TruckSpec[];
   pallets: PalletPreset[];
+  cargo?: CargoPreset[];
 }
 
 export const TRUCKS_KEY = "pallet-packer:trucks";
 export const PALLETS_KEY = "pallet-packer:pallets";
+export const CARGO_KEY = "paketo_cargo_presets";
 
 export const DEFAULT_TRUCKS: TruckSpec[] = [
   {
@@ -45,6 +59,53 @@ export const DEFAULT_PALLETS: PalletPreset[] = [
   { id: "eur-3", name: "EUR 3", width: 1000, length: 1200 },
 ];
 
+export const DEFAULT_CARGO_PRESETS: CargoPreset[] = [
+  {
+    id: "cargo-eur-carton-1400",
+    name: "Karton EUR 1400 mm",
+    palletLength: 1200,
+    palletWidth: 800,
+    cargoLength: 1200,
+    cargoWidth: 800,
+    cargoHeight: 1400,
+    defaultCanBeOnTop: true,
+    defaultCanSupportTop: true,
+  },
+  {
+    id: "cargo-eur-carton-1000",
+    name: "Karton EUR 1000 mm",
+    palletLength: 1200,
+    palletWidth: 800,
+    cargoLength: 1200,
+    cargoWidth: 800,
+    cargoHeight: 1000,
+    defaultCanBeOnTop: true,
+    defaultCanSupportTop: true,
+  },
+  {
+    id: "cargo-a4-eur",
+    name: "Karton A4 na EUR",
+    palletLength: 1200,
+    palletWidth: 800,
+    cargoLength: 430,
+    cargoWidth: 310,
+    cargoHeight: 250,
+    defaultCanBeOnTop: true,
+    defaultCanSupportTop: true,
+  },
+  {
+    id: "cargo-eur-heavy",
+    name: "Nestohovatelný EUR",
+    palletLength: 1200,
+    palletWidth: 800,
+    cargoLength: 1200,
+    cargoWidth: 800,
+    cargoHeight: 1800,
+    defaultCanBeOnTop: false,
+    defaultCanSupportTop: false,
+  },
+];
+
 export function isTruckList(value: unknown): value is TruckSpec[] {
   return (
     Array.isArray(value) &&
@@ -70,6 +131,25 @@ export function isPalletList(value: unknown): value is PalletPreset[] {
         typeof item.name === "string" &&
         typeof item.width === "number" &&
         typeof item.length === "number",
+    )
+  );
+}
+
+export function isCargoList(value: unknown): value is CargoPreset[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (item) =>
+        item &&
+        typeof item.id === "string" &&
+        typeof item.name === "string" &&
+        typeof item.palletLength === "number" &&
+        typeof item.palletWidth === "number" &&
+        typeof item.cargoLength === "number" &&
+        typeof item.cargoWidth === "number" &&
+        typeof item.cargoHeight === "number" &&
+        typeof item.defaultCanBeOnTop === "boolean" &&
+        typeof item.defaultCanSupportTop === "boolean",
     )
   );
 }

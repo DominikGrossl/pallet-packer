@@ -29,6 +29,7 @@ import {
   NUDGE_STEP_MM,
   PALLET_BASE_HEIGHT_MM,
   type PackingResult,
+  type PlacementTarget,
   type PlacedItem,
   type TruckSpec,
 } from "../lib/packer";
@@ -74,11 +75,15 @@ export interface TruckCanvasProps {
   truck: TruckSpec;
   result: PackingResult | null;
   theme: Theme;
-  selectedUnitId?: string | null;
-  onSelectedUnitIdChange?: (id: string | null) => void;
-  onNudge?: (id: string, delta: { dx?: number; dy?: number; dz?: number }) => boolean | void;
-  onRotate?: (id: string) => void;
-  onToggleElevation?: (id: string) => void;
+  selectedUnitIds?: string[];
+  onSelectedUnitIdsChange?: (ids: string[]) => void;
+  onNudge?: (ids: string[], delta: { dx?: number; dy?: number; dz?: number }) => boolean | void;
+  onRotate?: (ids: string[]) => void;
+  placementMode?: "floor" | "stack" | null;
+  placementTargets?: PlacementTarget[];
+  onStartPlacement?: (mode: "floor" | "stack") => void;
+  onSelectPlacementTarget?: (target: PlacementTarget) => void;
+  onCancelPlacement?: () => void;
 }
 
 export interface TruckCanvasHandle {
@@ -99,6 +104,8 @@ const COLOR_PALLET = "#d4a373";
 const COLOR_PALLET_EDGE = "#b08968";
 const COLOR_HOVER = "#9ed843";
 const HOVER_SCALE = 1.002;
+
+function ignoreRaycast() {}
 
 const PALETTES: Record<Theme, ScenePalette> = {
   light: {
@@ -162,6 +169,8 @@ function insetSize(size: number): number {
 function buildPalletGeometry(item: PlacedItem, truck: TruckDimensions): PalletGeometry {
   const footprintWidth = toMeters(item.width);
   const footprintLength = toMeters(item.length);
+  const cargoWidth = toMeters(item.cargoWidth);
+  const cargoLength = toMeters(item.cargoLength);
   const cargoHeight = Math.max(toMeters(item.height), 0);
   const baseHeight = toMeters(PALLET_BASE_HEIGHT_MM);
   const layerGap = toMeters(LAYER_GAP_MM);
@@ -169,7 +178,7 @@ function buildPalletGeometry(item: PlacedItem, truck: TruckDimensions): PalletGe
   const floorY = toMeters(item.y);
 
   return {
-    // The packer anchors items by their occupied footprint, so pallet and cargo share its centre.
+    // The packer anchors items by their occupied footprint; cargo and pallet share its centre.
     centerX: toMeters(item.x) + footprintWidth / 2 - truck.width / 2,
     centerZ: toMeters(item.z) + footprintLength / 2 - truck.length / 2,
     base: [
@@ -178,7 +187,7 @@ function buildPalletGeometry(item: PlacedItem, truck: TruckDimensions): PalletGe
       insetSize(toMeters(item.palletLength)),
     ],
     baseCenterY: floorY + baseHeight / 2,
-    cargo: [insetSize(footprintWidth), cargoHeight, insetSize(footprintLength)],
+    cargo: [insetSize(cargoWidth), cargoHeight, insetSize(cargoLength)],
     cargoCenterY: floorY + baseHeight + layerGap + cargoHeight / 2,
     bounds: [footprintWidth, visualHeight, footprintLength],
     centerY: floorY + visualHeight / 2,
@@ -211,7 +220,7 @@ function TruckShell({
 
   return (
     <group>
-      <mesh position={[0, height / 2, 0]} scale={1.001} onClick={clickEmpty}>
+      <mesh position={[0, height / 2, 0]} scale={1.001} raycast={ignoreRaycast}>
         <boxGeometry args={[width, height, length]} />
         <meshBasicMaterial
           color={palette.bed}
@@ -220,7 +229,7 @@ function TruckShell({
           side={BackSide}
           depthWrite={false}
         />
-        <Edges color={palette.edge} lineWidth={1.4} renderOrder={10}>
+        <Edges color={palette.edge} lineWidth={1.4} renderOrder={10} raycast={ignoreRaycast}>
           <lineBasicMaterial
             color={palette.edge}
             polygonOffset
@@ -236,7 +245,7 @@ function TruckShell({
         <meshStandardMaterial color={palette.bed} roughness={1} metalness={0} side={DoubleSide} />
       </mesh>
 
-      <mesh position={[0, height / 2, frontZ + 0.004]}>
+      <mesh position={[0, height / 2, frontZ + 0.004]} raycast={ignoreRaycast}>
         <planeGeometry args={[width, height]} />
         <meshStandardMaterial
           color={palette.edge}
@@ -261,10 +270,10 @@ function TruckShell({
         <Edges color={palette.edge} lineWidth={1} />
       </mesh>
 
-      <mesh position={[0, height / 2, rearZ + 0.008]}>
+      <mesh position={[0, height / 2, rearZ + 0.008]} raycast={ignoreRaycast}>
         <planeGeometry args={[width, height]} />
         <meshBasicMaterial transparent opacity={0} depthWrite={false} side={DoubleSide} />
-        <Edges color={palette.rearFrame} lineWidth={2.4} renderOrder={10}>
+        <Edges color={palette.rearFrame} lineWidth={2.4} renderOrder={10} raycast={ignoreRaycast}>
           <lineBasicMaterial
             color={palette.rearFrame}
             polygonOffset
@@ -307,6 +316,7 @@ function PalletMesh({
   palette,
   hovered,
   selected,
+  interactive,
   onHover,
   onSelect,
 }: {
@@ -314,8 +324,9 @@ function PalletMesh({
   palette: ScenePalette;
   hovered: boolean;
   selected: boolean;
+  interactive: boolean;
   onHover: (hovered: boolean) => void;
-  onSelect: () => void;
+  onSelect: (additive: boolean) => void;
 }) {
   const { geometry } = unit;
   const highlighted = hovered || selected;
@@ -332,7 +343,8 @@ function PalletMesh({
 
   const select = (event: ThreeEvent<MouseEvent>) => {
     event.stopPropagation();
-    onSelect();
+    const native = event.nativeEvent;
+    onSelect(native.ctrlKey || native.metaKey);
   };
 
   return (
@@ -396,15 +408,74 @@ function PalletMesh({
       {/* Invisible hit box: one hover/click target for the pallet and its cargo. */}
       <mesh
         position={[0, geometry.centerY, 0]}
-        onPointerOver={enter}
-        onPointerOut={leave}
-        onPointerDown={(event) => event.stopPropagation()}
-        onClick={select}
+        onPointerOver={interactive ? enter : undefined}
+        onPointerOut={interactive ? leave : undefined}
+        onPointerDown={interactive ? (event) => event.stopPropagation() : undefined}
+        onClick={interactive ? select : undefined}
       >
         <boxGeometry args={geometry.bounds} />
         <meshBasicMaterial transparent opacity={0} depthWrite={false} />
       </mesh>
     </group>
+  );
+}
+
+const SLOT_PAD_INSET_MM = 2;
+const SLOT_PAD_LIFT_MM = 8;
+
+function placementSlotId(target: PlacementTarget): string {
+  return `${target.x}:${target.y}:${target.z}`;
+}
+
+function GhostSlot({
+  item,
+  target,
+  dimensions,
+  hovered,
+  onHover,
+  onSelect,
+}: {
+  item: PlacedItem;
+  target: PlacementTarget;
+  dimensions: TruckDimensions;
+  hovered: boolean;
+  onHover: (hovered: boolean) => void;
+  onSelect: () => void;
+}) {
+  const widthM = toMeters(item.width);
+  const lengthM = toMeters(item.length);
+  const inset = toMeters(SLOT_PAD_INSET_MM);
+  const padWidth = Math.max(inset, widthM - inset);
+  const padLength = Math.max(inset, lengthM - inset);
+  const centerX = toMeters(target.x) + widthM / 2 - dimensions.width / 2;
+  const centerZ = toMeters(target.z) + lengthM / 2 - dimensions.length / 2;
+  const padY = toMeters(target.y + SLOT_PAD_LIFT_MM);
+
+  return (
+    <mesh
+      position={[centerX, padY, centerZ]}
+      rotation={[-Math.PI / 2, 0, 0]}
+      renderOrder={40}
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => {
+        event.stopPropagation();
+        onSelect();
+      }}
+      onPointerOver={(event) => {
+        event.stopPropagation();
+        onHover(true);
+      }}
+      onPointerOut={() => onHover(false)}
+    >
+      <planeGeometry args={[padWidth, padLength]} />
+      <meshBasicMaterial
+        color={hovered ? "#9ed843" : "#38bdf8"}
+        transparent
+        opacity={hovered ? 0.45 : 0.18}
+        depthWrite={false}
+        side={DoubleSide}
+      />
+    </mesh>
   );
 }
 
@@ -484,9 +555,9 @@ function PalletHud({
 
         <dl className="mt-2 space-y-1">
           <HudRow
-            label="Rozměry"
+            label="Náklad"
             value={
-              <AxisMeasure length={item.length} width={item.width} height={item.height} />
+              <AxisMeasure length={item.cargoLength} width={item.cargoWidth} height={item.height} />
             }
           />
           <HudRow
@@ -508,7 +579,11 @@ function PalletHud({
               : "text-slate-500 dark:text-slate-400",
           )}
         >
-          {item.isOverhanging ? "Náklad přesahuje paletu" : "V rozměru palety"}
+          {item.isOverhanging
+            ? "Náklad přesahuje paletu"
+            : item.cargoWidth < item.palletWidth || item.cargoLength < item.palletLength
+              ? "Náklad je menší než paleta"
+              : "V rozměru palety"}
         </p>
       </div>
     </div>
@@ -521,17 +596,29 @@ const HOLD_INTERVAL_MS = 75;
 function InspectorButton({
   label,
   onClick,
+  disabled = false,
+  active = false,
   children,
 }: {
   label: string;
   onClick: () => void;
+  disabled?: boolean;
+  active?: boolean;
   children: ReactNode;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex h-8 flex-1 items-center justify-center gap-1 rounded-lg border border-slate-200/80 bg-white/80 px-2 text-[11px] font-medium text-slate-700 shadow-sm transition select-none hover:bg-white dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-200 dark:hover:bg-slate-800"
+      disabled={disabled}
+      className={clsx(
+        "inline-flex h-8 flex-1 items-center justify-center gap-1 rounded-lg border px-2 text-[11px] font-medium shadow-sm transition select-none",
+        disabled
+          ? "cursor-not-allowed border-slate-200/60 bg-slate-100/80 text-slate-400 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-600"
+          : active
+            ? "border-[#9ed843] bg-[#9ed843]/20 text-slate-800 dark:text-slate-100"
+            : "border-slate-200/80 bg-white/80 text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-200 dark:hover:bg-slate-800",
+      )}
     >
       {children}
       {label}
@@ -606,29 +693,35 @@ function NudgeButton({
 }
 
 function PalletInspector({
-  unit,
+  units,
   unitNumber,
+  canBeOnTop,
+  placementMode,
   onClose,
   onNudge,
   onRotate,
-  onToggleElevation,
+  onStartPlacement,
 }: {
-  unit: PalletUnit;
+  units: PalletUnit[];
   unitNumber: number;
+  canBeOnTop: boolean;
+  placementMode: "floor" | "stack" | null;
   onClose: () => void;
   onNudge: (delta: { dx?: number; dy?: number; dz?: number }) => boolean;
   onRotate: () => void;
-  onToggleElevation: () => void;
+  onStartPlacement: (mode: "floor" | "stack") => void;
 }) {
-  const { item } = unit;
-  const stacked = item.y > 0;
+  const single = units.length === 1 ? units[0] : null;
+  const title = single
+    ? `${single.item.name} · č. ${unitNumber}`
+    : `Vybráno: ${units.length} ks`;
 
   return (
     <div className="absolute bottom-4 left-1/2 z-20 w-[min(100%-1.5rem,28rem)] -translate-x-1/2">
       <div className="rounded-2xl border border-slate-200/60 bg-white/80 px-3 py-2.5 shadow-md backdrop-blur-md dark:border-slate-800/80 dark:bg-slate-900/80">
         <div className="mb-2 flex items-center justify-between gap-3">
           <p className="truncate text-xs font-semibold text-slate-800 dark:text-slate-100">
-            {item.name} · č. {unitNumber}
+            {title}
           </p>
           <button
             type="button"
@@ -656,16 +749,25 @@ function PalletInspector({
             </NudgeButton>
           </div>
           <div className="flex items-center gap-1.5">
-            <InspectorButton
-              label={stacked ? "Na podlahu" : "Do stohu"}
-              onClick={onToggleElevation}
-            >
-              {stacked ? (
-                <ArrowDownToLine className="h-3.5 w-3.5" />
-              ) : (
-                <ArrowUpFromLine className="h-3.5 w-3.5" />
-              )}
-            </InspectorButton>
+            {single ? (
+              <>
+                <InspectorButton
+                  label="Na podlahu"
+                  active={placementMode === "floor"}
+                  onClick={() => onStartPlacement("floor")}
+                >
+                  <ArrowDownToLine className="h-3.5 w-3.5" />
+                </InspectorButton>
+                <InspectorButton
+                  label="Do stohu"
+                  disabled={!canBeOnTop}
+                  active={placementMode === "stack"}
+                  onClick={() => onStartPlacement("stack")}
+                >
+                  <ArrowUpFromLine className="h-3.5 w-3.5" />
+                </InspectorButton>
+              </>
+            ) : null}
             <InspectorButton label="Otočit o 90°" onClick={onRotate}>
               <RotateCw className="h-3.5 w-3.5" />
             </InspectorButton>
@@ -681,11 +783,13 @@ function ViewControls({
   target,
   minDistance,
   maxDistance,
+  enabled = true,
 }: {
   position: Vec3;
   target: Vec3;
   minDistance: number;
   maxDistance: number;
+  enabled?: boolean;
 }) {
   const camera = useThree((state) => state.camera);
   const controlsRef = useRef<ComponentRef<typeof OrbitControls>>(null);
@@ -713,6 +817,7 @@ function ViewControls({
       minDistance={minDistance}
       maxDistance={maxDistance}
       maxPolarAngle={Math.PI / 2 - 0.04}
+      enabled={enabled}
     />
   );
 }
@@ -746,20 +851,26 @@ export default forwardRef<TruckCanvasHandle, TruckCanvasProps>(function TruckCan
     truck,
     result,
     theme,
-    selectedUnitId = null,
-    onSelectedUnitIdChange,
+    selectedUnitIds = [],
+    onSelectedUnitIdsChange,
     onNudge,
     onRotate,
-    onToggleElevation,
+    placementMode = null,
+    placementTargets = [],
+    onStartPlacement,
+    onSelectPlacementTarget,
+    onCancelPlacement,
   },
   ref,
 ) {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   // Sticky copy of the last hovered item, so the HUD keeps its content while fading out.
   const [hudId, setHudId] = useState<string | null>(null);
+  const [hoveredSlotId, setHoveredSlotId] = useState<string | null>(null);
   const pointerDownRef = useRef({ x: 0, y: 0 });
   const glRef = useRef<WebGLRenderer | null>(null);
   const palette = PALETTES[theme];
+  const selectedIdSet = useMemo(() => new Set(selectedUnitIds), [selectedUnitIds]);
 
   const dimensions = useMemo<TruckDimensions>(
     () => ({
@@ -787,10 +898,13 @@ export default forwardRef<TruckCanvasHandle, TruckCanvasProps>(function TruckCan
 
   const hudUnit = useMemo(() => units.find((unit) => unit.item.id === hudId), [units, hudId]);
 
-  const selectedUnit = useMemo(
-    () => units.find((unit) => unit.item.id === selectedUnitId) ?? null,
-    [units, selectedUnitId],
+  const selectedUnits = useMemo(
+    () => units.filter((unit) => selectedIdSet.has(unit.item.id)),
+    [units, selectedIdSet],
   );
+
+  const selectedUnit = selectedUnits[0] ?? null;
+  const placementActive = placementMode !== null;
 
   const unitNumberOf = (target: PalletUnit | undefined) => {
     if (!target) return 1;
@@ -811,15 +925,43 @@ export default forwardRef<TruckCanvasHandle, TruckCanvasProps>(function TruckCan
     setHoveredId((current) => (current === item.id ? null : current));
   };
 
-  const selectUnit = (id: string | null) => {
-    onSelectedUnitIdChange?.(id);
+  const selectUnits = (id: string, additive: boolean) => {
+    if (additive) {
+      const next = selectedIdSet.has(id)
+        ? selectedUnitIds.filter((entry) => entry !== id)
+        : [...selectedUnitIds, id];
+      onSelectedUnitIdsChange?.(next);
+      return;
+    }
+    onSelectedUnitIdsChange?.([id]);
+  };
+
+  const clearSelection = () => {
+    if (placementActive) onCancelPlacement?.();
+    onSelectedUnitIdsChange?.([]);
   };
 
   const deselectIfClick = (point: { clientX: number; clientY: number }) => {
     const dx = point.clientX - pointerDownRef.current.x;
     const dy = point.clientY - pointerDownRef.current.y;
-    if (Math.hypot(dx, dy) < 5) selectUnit(null);
+    if (Math.hypot(dx, dy) < 5) clearSelection();
   };
+
+  useEffect(() => {
+    if (!placementActive) setHoveredSlotId(null);
+  }, [placementActive]);
+
+  useEffect(() => {
+    if (!placementActive) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setHoveredSlotId(null);
+        onCancelPlacement?.();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [placementActive, onCancelPlacement]);
 
   useImperativeHandle(ref, () => ({
     downloadSnapshot() {
@@ -855,7 +997,7 @@ export default forwardRef<TruckCanvasHandle, TruckCanvasProps>(function TruckCan
     <div
       className={clsx(
         "relative h-full w-full overflow-hidden rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-900",
-        (hoveredUnit || selectedUnit) && "cursor-pointer",
+        (hoveredUnit || selectedUnits.length > 0 || hoveredSlotId) && "cursor-pointer",
       )}
     >
       <Canvas
@@ -905,21 +1047,51 @@ export default forwardRef<TruckCanvasHandle, TruckCanvasProps>(function TruckCan
             unit={unit}
             palette={palette}
             hovered={hoveredUnit === unit}
-            selected={selectedUnit === unit}
+            selected={selectedIdSet.has(unit.item.id)}
+            interactive={!placementActive}
             onHover={(hovered) => handleHover(unit.item, hovered)}
-            onSelect={() => selectUnit(unit.item.id)}
+            onSelect={(additive) => selectUnits(unit.item.id, additive)}
           />
         ))}
+
+        {placementActive && selectedUnit
+          ? placementTargets.map((target) => {
+              const id = placementSlotId(target);
+              return (
+                <GhostSlot
+                  key={id}
+                  item={selectedUnit.item}
+                  target={target}
+                  dimensions={dimensions}
+                  hovered={hoveredSlotId === id}
+                  onHover={(hovered) => setHoveredSlotId(hovered ? id : null)}
+                  onSelect={() => {
+                    setHoveredSlotId(null);
+                    onSelectPlacementTarget?.(target);
+                  }}
+                />
+              );
+            })
+          : null}
 
         <ViewControls
           position={cameraPosition}
           target={cameraTarget}
           minDistance={radius * 0.3}
           maxDistance={radius * 4.5}
+          enabled={!hoveredSlotId}
         />
       </Canvas>
 
-      {hudUnit && !selectedUnit ? (
+      {placementActive ? (
+        <div className="pointer-events-none absolute inset-x-0 top-4 z-20 flex justify-center px-3">
+          <p className="rounded-full border border-[#9ed843]/40 bg-white/85 px-4 py-2 text-xs font-medium text-slate-700 shadow-md backdrop-blur-md dark:border-[#9ed843]/30 dark:bg-slate-900/85 dark:text-slate-200">
+            Vyberte cílové místo kliknutím (nebo Esc pro zrušení)
+          </p>
+        </div>
+      ) : null}
+
+      {hudUnit && selectedUnits.length === 0 ? (
         <PalletHud
           unit={hudUnit}
           visible={Boolean(hoveredUnit)}
@@ -927,14 +1099,16 @@ export default forwardRef<TruckCanvasHandle, TruckCanvasProps>(function TruckCan
         />
       ) : null}
 
-      {selectedUnit ? (
+      {selectedUnits.length > 0 ? (
         <PalletInspector
-          unit={selectedUnit}
-          unitNumber={unitNumberOf(selectedUnit)}
-          onClose={() => selectUnit(null)}
-          onNudge={(delta) => onNudge?.(selectedUnit.item.id, delta) ?? false}
-          onRotate={() => onRotate?.(selectedUnit.item.id)}
-          onToggleElevation={() => onToggleElevation?.(selectedUnit.item.id)}
+          units={selectedUnits}
+          unitNumber={unitNumberOf(selectedUnit ?? undefined)}
+          canBeOnTop={selectedUnit?.item.canBeOnTop !== false}
+          placementMode={placementMode}
+          onClose={clearSelection}
+          onNudge={(delta) => onNudge?.(selectedUnitIds, delta) ?? false}
+          onRotate={() => onRotate?.(selectedUnitIds)}
+          onStartPlacement={(mode) => onStartPlacement?.(mode)}
         />
       ) : null}
 
