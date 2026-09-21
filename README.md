@@ -8,6 +8,7 @@
 - barvy random (jak to vyresit s vice polozkama pro jednu znacku)
 - barvy pri snimku, legenda, pocet jednotlivych
 - vypocitat naklad nahoru
+- scroll visible u seznamu nakladu na prave strane, posun neviditelny
 - 
 - Zmeny:
 - tlacitko na mobilu
