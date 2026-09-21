@@ -7,6 +7,7 @@
 - Todo:
 - barvy random (jak to vyresit s vice polozkama pro jednu znacku)
 - barvy pri snimku, legenda, pocet jednotlivych
+- vypocitat naklad nahoru
 - 
 - Zmeny:
 - tlacitko na mobilu
