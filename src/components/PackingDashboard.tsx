@@ -934,7 +934,7 @@ export default function PackingDashboard() {
 
         <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-12">
           <section className={clsx(cardClass, "lg:col-span-5")}>
-            <div className="mb-4 flex items-center justify-between">
+            <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <ClipboardList className={headingIconClass} />
                 <h2 className="text-sm font-semibold">Seznam nákladu</h2>
@@ -944,7 +944,17 @@ export default function PackingDashboard() {
               </span>
             </div>
 
-            <div className="max-h-[600px] space-y-2 overflow-y-auto pr-1">
+            <button
+              type="button"
+              onClick={calculateLoad}
+              disabled={queue.length === 0 || truckWidth <= 0 || truckLength <= 0 || truckHeight <= 0}
+              className={clsx(calculateButtonClass, "my-3")}
+            >
+              <Calculator className="h-4 w-4" />
+              Vypočítat náklad
+            </button>
+
+            <div className="max-h-[600px] space-y-2 overflow-y-auto [scrollbar-gutter:stable] [scrollbar-width:thin] [scrollbar-color:#334155_transparent] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-700/60 [&::-webkit-scrollbar-thumb:hover]:bg-slate-500">
               {queue.length === 0 ? (
                 <div className="flex h-40 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-slate-200 p-6 dark:border-slate-800">
                   <ClipboardList className="h-7 w-7 text-slate-300 dark:text-slate-600" />
@@ -1005,16 +1015,6 @@ export default function PackingDashboard() {
                 })
               )}
             </div>
-
-            <button
-              type="button"
-              onClick={calculateLoad}
-              disabled={queue.length === 0 || truckWidth <= 0 || truckLength <= 0 || truckHeight <= 0}
-              className={clsx(calculateButtonClass, "mt-4")}
-            >
-              <Calculator className="h-4 w-4" />
-              Vypočítat náklad
-            </button>
 
             <div className="mt-4 grid grid-cols-3 gap-2">
               <ResultStat label="Naloženo" value={result ? String(result.placed.length) : "—"} />

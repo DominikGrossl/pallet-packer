@@ -442,13 +442,18 @@ function GhostSlot({
   onHover: (hovered: boolean) => void;
   onSelect: () => void;
 }) {
-  const widthM = toMeters(item.width);
-  const lengthM = toMeters(item.length);
+  const stacked = target.y > 0;
+  const spanWidth = stacked ? item.palletWidth : item.width;
+  const spanLength = stacked ? item.palletLength : item.length;
+  const originX = stacked ? target.x + (item.width - item.palletWidth) / 2 : target.x;
+  const originZ = stacked ? target.z + (item.length - item.palletLength) / 2 : target.z;
+  const widthM = toMeters(spanWidth);
+  const lengthM = toMeters(spanLength);
   const inset = toMeters(SLOT_PAD_INSET_MM);
   const padWidth = Math.max(inset, widthM - inset);
   const padLength = Math.max(inset, lengthM - inset);
-  const centerX = toMeters(target.x) + widthM / 2 - dimensions.width / 2;
-  const centerZ = toMeters(target.z) + lengthM / 2 - dimensions.length / 2;
+  const centerX = toMeters(originX) + widthM / 2 - dimensions.width / 2;
+  const centerZ = toMeters(originZ) + lengthM / 2 - dimensions.length / 2;
   const padY = toMeters(target.y + SLOT_PAD_LIFT_MM);
 
   return (

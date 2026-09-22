@@ -144,12 +144,12 @@ function volumesOf(item: PlacedItem): VolumeBox[] {
   return volumes;
 }
 
-function cargoTopRect(item: PlacedItem): { x: number; z: number; width: number; length: number } {
+function palletBaseRect(item: PlacedItem): { x: number; z: number; width: number; length: number } {
   return {
-    x: item.x + (item.width - item.cargoWidth) / 2,
-    z: item.z + (item.length - item.cargoLength) / 2,
-    width: item.cargoWidth,
-    length: item.cargoLength,
+    x: item.x + (item.width - item.palletWidth) / 2,
+    z: item.z + (item.length - item.palletLength) / 2,
+    width: item.palletWidth,
+    length: item.palletLength,
   };
 }
 
@@ -558,13 +558,13 @@ function packAttempt(
 
     if (fit.kind === "floor") {
       if (allowsSupportTop(item.source)) {
-        const top = cargoTopRect(placedItem);
+        const base = palletBaseRect(placedItem);
         stackSlots.push({
-          x: top.x,
+          x: base.x,
           y: occupyHeight(item.height),
-          z: top.z,
-          width: top.width,
-          length: top.length,
+          z: base.z,
+          width: base.width,
+          length: base.length,
         });
       }
       freeRects = occupyFreeRects(freeRects, {
@@ -578,13 +578,13 @@ function packAttempt(
 
     if (allowsSupportTop(item.source)) {
       const slot = stackSlots[fit.slotIndex];
-      const top = cargoTopRect(placedItem);
+      const base = palletBaseRect(placedItem);
       stackSlots[fit.slotIndex] = {
-        x: top.x,
+        x: base.x,
         y: slot.y + occupyHeight(item.height),
-        z: top.z,
-        width: top.width,
-        length: top.length,
+        z: base.z,
+        width: base.width,
+        length: base.length,
       };
     } else {
       stackSlots.splice(fit.slotIndex, 1);
@@ -828,7 +828,7 @@ export function findFloorPlacementTargets(
   return uniqueTargets(targets);
 }
 
-/** Upper faces that can support `item` (canSupportTop + footprint + height + canBeOnTop). */
+/** Stack targets sit on the lower pallet footprint, not the cargo box. */
 export function findStackPlacementTargets(
   truck: TruckSpec,
   placed: PlacedItem[],
@@ -837,27 +837,24 @@ export function findStackPlacementTargets(
   if (!allowsBeOnTop(item)) return [];
 
   const others = othersOf(placed, item.id);
+  const incomingHeight = occupyHeight(item.height);
   const targets: PlacementTarget[] = [];
 
   for (const support of others) {
     if (!allowsSupportTop(support)) continue;
-    if (item.palletWidth > support.cargoWidth || item.palletLength > support.cargoLength) continue;
+    if (item.palletWidth > support.palletWidth || item.palletLength > support.palletLength) continue;
+
+    const base = palletBaseRect(support);
     const y = support.y + occupyHeight(support.height);
-    if (y + occupyHeight(item.height) > truck.innerHeight) continue;
-    const slot = {
-      x: support.x + (support.width - support.cargoWidth) / 2,
-      z: support.z + (support.length - support.cargoLength) / 2,
-      y,
-      width: support.cargoWidth,
-      length: support.cargoLength,
-    };
-    const palletX = slot.x + (slot.width - item.palletWidth) / 2;
-    const palletZ = slot.z + (slot.length - item.palletLength) / 2;
-    const x = Math.round(palletX - (item.width - item.palletWidth) / 2);
-    const z = Math.round(palletZ - (item.length - item.palletLength) / 2);
+    if (y + incomingHeight > truck.innerHeight) continue;
+
+    const x = Math.round(base.x - (item.width - item.palletWidth) / 2);
+    const z = Math.round(base.z - (item.length - item.palletLength) / 2);
     const preview = { ...item, x, y, z };
     if (!volumesFitTruck(truck, preview)) continue;
-    if (others.some((other) => itemOverlapsItem(preview, other))) continue;
+    if (others.some((other) => other.id !== support.id && itemOverlapsItem(preview, other))) {
+      continue;
+    }
     targets.push({ x, y, z });
   }
 
@@ -877,7 +874,12 @@ export function tryMovePlacedItemTo(
   const others = othersOf(placed, id);
   const next = { ...item, x: target.x, y: target.y, z: target.z };
   if (!volumesFitTruck(truck, next)) return null;
-  if (others.some((other) => itemOverlapsItem(next, other))) return null;
+
+  const support =
+    target.y === 0
+      ? undefined
+      : others.find((other) => other.y + occupyHeight(other.height) === target.y);
+  if (others.some((other) => other !== support && itemOverlapsItem(next, other))) return null;
 
   return replaceItem(placed, id, next);
 }
