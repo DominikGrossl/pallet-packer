@@ -2,6 +2,7 @@
 
 - Todo:
 - barvy random (jak to vyresit s vice polozkama pro jednu znacku), barvy pri snimku, legenda, pocet jednotlivych
+- import z K2, excel?
 - 
 - Udelane zmeny:
 - tlacitko na mobilu
