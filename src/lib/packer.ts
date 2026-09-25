@@ -24,6 +24,8 @@ export interface CargoItem {
   canSupportTop?: boolean;
   /** This unit may sit at y > 0. Defaults to true when omitted. */
   canBeOnTop?: boolean;
+  /** Batch color shared by every unit from the same queue line. */
+  color: string;
 }
 
 export interface PlacedItem {
@@ -50,6 +52,7 @@ export interface PlacedItem {
   rotation: 0 | 90;
   canSupportTop: boolean;
   canBeOnTop: boolean;
+  color: string;
 }
 
 export interface PackingResult {
@@ -493,6 +496,7 @@ function toPlaced(
     rotation: orientation.rotation,
     canSupportTop: allowsSupportTop(item.source),
     canBeOnTop: allowsBeOnTop(item.source),
+    color: item.source.color,
   };
 }
 
@@ -904,6 +908,7 @@ export function testPacker(): void {
     weight: 500,
     canSupportTop: true,
     canBeOnTop: true,
+    color: "#10b981",
   }));
 
   const result = packTruck(truck, items);

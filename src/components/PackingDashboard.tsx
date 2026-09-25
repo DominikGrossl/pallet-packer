@@ -7,6 +7,7 @@ import {
   ChevronDown,
   ClipboardList,
   Download,
+  ImageDown,
   Moon,
   Package,
   Plus,
@@ -48,6 +49,7 @@ import {
   type PalletPreset,
   type PresetBundle,
 } from "../lib/presets";
+import { CARGO_PALETTE } from "../lib/cargoColors";
 import { applyTheme, loadTheme, saveTheme, type Theme } from "../lib/theme";
 
 interface QueueEntry {
@@ -61,6 +63,7 @@ interface QueueEntry {
   canBeOnTop: boolean;
   canSupportTop: boolean;
   quantity: number;
+  color: string;
 }
 
 const percentFormat = new Intl.NumberFormat("cs-CZ", {
@@ -314,6 +317,7 @@ export default function PackingDashboard() {
   const cargoSaveInputRef = useRef<HTMLInputElement>(null);
 
   const [queue, setQueue] = useState<QueueEntry[]>([]);
+  const cargoColorIndex = useRef(0);
   const [result, setResult] = useState<PackingResult | null>(null);
   const [selectedUnitIds, setSelectedUnitIds] = useState<string[]>([]);
   const [placementMode, setPlacementMode] = useState<"floor" | "stack" | null>(null);
@@ -478,6 +482,8 @@ export default function PackingDashboard() {
         : pallet && selectedPalletId !== "custom"
           ? pallet.name
           : "Vlastní paleta";
+    const color = CARGO_PALETTE[cargoColorIndex.current % CARGO_PALETTE.length];
+    cargoColorIndex.current += 1;
     setQueue((current) => [
       ...current,
       {
@@ -491,6 +497,7 @@ export default function PackingDashboard() {
         canBeOnTop,
         canSupportTop,
         quantity: qty,
+        color,
       },
     ]);
     setResult(null);
@@ -524,6 +531,7 @@ export default function PackingDashboard() {
         height: entry.height,
         canBeOnTop: entry.canBeOnTop,
         canSupportTop: entry.canSupportTop,
+        color: entry.color,
       })),
     );
     setResult(packTruck(activeTruck, items));
@@ -972,8 +980,14 @@ export default function PackingDashboard() {
                   return (
                   <div
                     key={entry.id}
-                    className={clsx(panelClass, "flex items-start justify-between gap-3 px-3 py-2.5")}
+                    className={clsx(panelClass, "flex items-stretch overflow-hidden")}
                   >
+                    <span
+                      aria-hidden
+                      className="w-1.5 shrink-0 self-stretch rounded-l"
+                      style={{ backgroundColor: entry.color }}
+                    />
+                    <div className="flex min-w-0 flex-1 items-start justify-between gap-3 px-3 py-2.5">
                     <div className="min-w-0">
                       <p className="text-sm font-medium">{entry.name}</p>
                       <div className="my-1.5 space-y-1">
@@ -1010,6 +1024,7 @@ export default function PackingDashboard() {
                         </span>
                       ) : null}
                     </div>
+                    </div>
                   </div>
                   );
                 })
@@ -1028,6 +1043,29 @@ export default function PackingDashboard() {
                 value={result ? `${percentFormat.format(result.floorUtilizationPercent)} %` : "—"}
               />
             </div>
+            <button
+              type="button"
+              onClick={() =>
+                downloadCargoSheet({
+                  vehicleName: activeTruck.name,
+                  entries: queue.map((entry) => ({
+                    ...entry,
+                    unplacedCount: result
+                      ? Math.max(0, entry.quantity - (placedBySource.get(entry.id) ?? 0))
+                      : 0,
+                  })),
+                  placed: result ? String(result.placed.length) : "—",
+                  unplaced: result ? String(result.unplaced.length) : "—",
+                  utilization: result
+                    ? `${percentFormat.format(result.floorUtilizationPercent)} %`
+                    : "—",
+                })
+              }
+              className={clsx(outlineButtonClass, "mt-3 w-full justify-center")}
+            >
+              <ImageDown className="h-4 w-4" />
+              Stáhnout nákladový list
+            </button>
           </section>
 
           <section className={clsx(cardClass, "flex w-full flex-col lg:col-span-7")}>
@@ -1037,16 +1075,13 @@ export default function PackingDashboard() {
                 <h2 className="text-sm font-semibold">Náhled nákladu</h2>
               </div>
               <div className="flex flex-wrap items-center gap-3">
-                <LegendDot color="#38bdf8" label="Na podlaze" />
-                <LegendDot color="#4ade80" label="Ve stohu" />
-                <LegendDot color="#fb923c" label="Přesah" />
                 <button
                   type="button"
                   onClick={() => canvasRef.current?.downloadSnapshot()}
                   className={smallButtonClass}
                 >
                   <Camera className="h-3.5 w-3.5" />
-                  Stáhnout snímek
+                  Stáhnout vizualizaci
                 </button>
               </div>
             </div>
@@ -1155,6 +1190,245 @@ function AxisMeasure({
   );
 }
 
+function traceRoundRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number,
+) {
+  const r = Math.min(radius, width / 2, height / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + width, y, x + width, y + height, r);
+  ctx.arcTo(x + width, y + height, x, y + height, r);
+  ctx.arcTo(x, y + height, x, y, r);
+  ctx.arcTo(x, y, x + width, y, r);
+  ctx.closePath();
+}
+
+function fillRoundRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number,
+  fill: string,
+) {
+  traceRoundRect(ctx, x, y, width, height, radius);
+  ctx.fillStyle = fill;
+  ctx.fill();
+}
+
+function strokeRoundRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number,
+  stroke: string,
+) {
+  traceRoundRect(ctx, x, y, width, height, radius);
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = 1;
+  ctx.stroke();
+}
+
+const SHEET_FONT = "Segoe UI, sans-serif";
+const SHEET_MUTED = "#94a3b8";
+const SHEET_TEXT = "#f8fafc";
+const SHEET_CARD = "#131b2e";
+const SHEET_STROKE = "#1e293b";
+
+function drawRuns(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  runs: { text: string; fill: string; font: string }[],
+) {
+  let cursor = x;
+  for (const run of runs) {
+    ctx.font = run.font;
+    ctx.fillStyle = run.fill;
+    ctx.fillText(run.text, cursor, y);
+    cursor += ctx.measureText(run.text).width;
+  }
+}
+
+function dimensionRuns(length: number, width: number, height?: number) {
+  const prefix = `400 14px ${SHEET_FONT}`;
+  const value = `700 14px ${SHEET_FONT}`;
+  const runs = [
+    { text: "d ", fill: SHEET_MUTED, font: prefix },
+    { text: String(length), fill: SHEET_TEXT, font: value },
+    { text: "  ×  š ", fill: SHEET_MUTED, font: prefix },
+    { text: String(width), fill: SHEET_TEXT, font: value },
+  ];
+  if (height !== undefined) {
+    runs.push(
+      { text: "  ×  v ", fill: SHEET_MUTED, font: prefix },
+      { text: String(height), fill: SHEET_TEXT, font: value },
+    );
+  }
+  runs.push({ text: " mm", fill: SHEET_MUTED, font: prefix });
+  return runs;
+}
+
+function downloadCargoSheet({
+  vehicleName,
+  entries,
+  placed,
+  unplaced,
+  utilization,
+}: {
+  vehicleName: string;
+  entries: (QueueEntry & { unplacedCount: number })[];
+  placed: string;
+  unplaced: string;
+  utilization: string;
+}) {
+  const scale = 2;
+  const width = 700;
+  const margin = 20;
+  const cardHeight = 108;
+  const cardGap = 10;
+  const headerHeight = 88;
+  const metricsHeight = 58;
+  const metricsGap = 14;
+  const bottomPad = 20;
+  const contentTop = margin + headerHeight + metricsHeight + metricsGap;
+  const height =
+    entries.length === 0
+      ? contentTop + 40 + bottomPad
+      : contentTop + entries.length * cardHeight + Math.max(0, entries.length - 1) * cardGap + bottomPad;
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(width * scale);
+  canvas.height = Math.round(height * scale);
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+
+  ctx.scale(scale, scale);
+  ctx.fillStyle = "#0f172a";
+  ctx.fillRect(0, 0, width, height);
+  fillRoundRect(ctx, 12, 12, width - 24, height - 24, 16, "#1e293b");
+
+  ctx.textBaseline = "alphabetic";
+  ctx.fillStyle = SHEET_TEXT;
+  ctx.font = `700 22px ${SHEET_FONT}`;
+  ctx.fillText("paketo", margin + 8, margin + 36);
+  const brandWidth = ctx.measureText("paketo").width;
+  ctx.fillStyle = "#9ed843";
+  ctx.fillText(".group", margin + 8 + brandWidth, margin + 36);
+  const groupWidth = ctx.measureText(".group").width;
+  ctx.fillStyle = "#e2e8f0";
+  ctx.font = `600 16px ${SHEET_FONT}`;
+  ctx.fillText("  |  Přehled nákladu", margin + 8 + brandWidth + groupWidth, margin + 36);
+
+  const stamp = new Intl.DateTimeFormat("cs-CZ", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date());
+  ctx.fillStyle = SHEET_MUTED;
+  ctx.font = `400 13px ${SHEET_FONT}`;
+  ctx.fillText(`${vehicleName}  ·  ${stamp}`, margin + 8, margin + 58);
+
+  const metrics: [string, string, boolean][] = [
+    ["Naloženo", placed, false],
+    ["Nenaloženo", unplaced, unplaced !== "—" && unplaced !== "0"],
+    ["Využití podlahy", utilization, false],
+  ];
+  const gap = 10;
+  const metricsX = margin + 8;
+  const metricsWidth = width - metricsX * 2;
+  const boxWidth = (metricsWidth - gap * 2) / 3;
+  const metricsY = margin + headerHeight;
+  metrics.forEach(([label, value, alert], index) => {
+    const x = metricsX + index * (boxWidth + gap);
+    fillRoundRect(ctx, x, metricsY, boxWidth, metricsHeight, 10, SHEET_CARD);
+    strokeRoundRect(ctx, x, metricsY, boxWidth, metricsHeight, 10, SHEET_STROKE);
+    ctx.fillStyle = SHEET_MUTED;
+    ctx.font = `600 11px ${SHEET_FONT}`;
+    ctx.fillText(label.toUpperCase(), x + 12, metricsY + 22);
+    ctx.fillStyle = alert ? "#f43f5e" : SHEET_TEXT;
+    ctx.font = `700 18px ${SHEET_FONT}`;
+    ctx.fillText(value, x + 12, metricsY + 44);
+  });
+
+  let y = contentTop;
+  if (entries.length === 0) {
+    ctx.fillStyle = SHEET_MUTED;
+    ctx.font = `400 14px ${SHEET_FONT}`;
+    ctx.fillText("V nákladu zatím nic není", metricsX, y + 20);
+  }
+
+  const cardX = metricsX;
+  const cardWidth = metricsWidth;
+  const stripWidth = 7;
+  for (const entry of entries) {
+    fillRoundRect(ctx, cardX, y, cardWidth, cardHeight, 10, SHEET_CARD);
+    strokeRoundRect(ctx, cardX, y, cardWidth, cardHeight, 10, SHEET_STROKE);
+    ctx.save();
+    traceRoundRect(ctx, cardX, y, cardWidth, cardHeight, 10);
+    ctx.clip();
+    ctx.fillStyle = entry.color;
+    ctx.fillRect(cardX, y, stripWidth, cardHeight);
+    ctx.restore();
+
+    const textX = cardX + stripWidth + 14;
+    ctx.fillStyle = SHEET_TEXT;
+    ctx.font = `700 14px ${SHEET_FONT}`;
+    ctx.fillText(entry.name, textX, y + 24);
+
+    ctx.font = `600 10px ${SHEET_FONT}`;
+    ctx.fillStyle = SHEET_MUTED;
+    ctx.fillText("PALETA", textX, y + 46);
+    drawRuns(ctx, textX + 64, y + 46, dimensionRuns(entry.palletLength, entry.palletWidth));
+
+    ctx.font = `600 10px ${SHEET_FONT}`;
+    ctx.fillStyle = SHEET_MUTED;
+    ctx.fillText("NÁKLAD", textX, y + 66);
+    drawRuns(
+      ctx,
+      textX + 64,
+      y + 66,
+      dimensionRuns(entry.cargoLength, entry.cargoWidth, entry.height),
+    );
+
+    const stacking = [
+      `Počet ${entry.quantity}`,
+      entry.canBeOnTop ? "Může do stohu" : "Pouze na podlahu",
+      entry.canSupportTop ? "Lze na ni stohovat" : "Nelze na ni stohovat",
+    ].join("  ·  ");
+    ctx.fillStyle = SHEET_MUTED;
+    ctx.font = `400 12px ${SHEET_FONT}`;
+    ctx.fillText(stacking, textX, y + 90);
+
+    if (entry.unplacedCount > 0) {
+      const badge = `✕ Nevejde se: ${entry.unplacedCount} ks`;
+      ctx.font = `700 11px ${SHEET_FONT}`;
+      const badgeWidth = ctx.measureText(badge).width + 16;
+      const badgeHeight = 22;
+      const badgeX = cardX + cardWidth - 12 - badgeWidth;
+      const badgeY = y + (cardHeight - badgeHeight) / 2;
+      fillRoundRect(ctx, badgeX, badgeY, badgeWidth, badgeHeight, 6, "#451a1a");
+      strokeRoundRect(ctx, badgeX, badgeY, badgeWidth, badgeHeight, 6, "rgba(239, 68, 68, 0.31)");
+      ctx.fillStyle = "#f87171";
+      ctx.font = `700 11px ${SHEET_FONT}`;
+      ctx.fillText(badge, badgeX + 8, badgeY + 15);
+    }
+
+    y += cardHeight + cardGap;
+  }
+
+  const link = document.createElement("a");
+  link.href = canvas.toDataURL("image/png");
+  link.download = "nakladovy-list.png";
+  link.click();
+}
+
 function ManifestDimRow({
   label,
   length,
@@ -1173,18 +1447,6 @@ function ManifestDimRow({
       </span>
       <AxisMeasure length={length} width={width} height={height} />
     </div>
-  );
-}
-
-function LegendDot({ color, label }: { color: string; label: string }) {
-  return (
-    <span className="inline-flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
-      <span
-        className="h-2.5 w-2.5 rounded-full ring-1 ring-slate-200 dark:ring-slate-700"
-        style={{ backgroundColor: color }}
-      />
-      {label}
-    </span>
   );
 }
 

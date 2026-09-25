@@ -13,7 +13,7 @@ import {
 } from "react";
 import clsx from "clsx";
 import { Canvas, useThree, type ThreeEvent } from "@react-three/fiber";
-import { Edges, Grid, Html, OrbitControls } from "@react-three/drei";
+import { Edges, Grid, Html, Line, OrbitControls } from "@react-three/drei";
 import { BackSide, DoubleSide, type WebGLRenderer } from "three";
 import {
   ArrowDownToLine,
@@ -96,16 +96,66 @@ const MIN_TRUCK_MM = 100;
 const FACE_INSET = 0.998;
 const LAYER_GAP_MM = 1;
 
-/** Cargo hues read on either background, so only the neutrals switch with the theme. */
-const COLOR_CARGO = "#38bdf8";
-const COLOR_CARGO_OVERHANGING = "#fb923c";
-const COLOR_CARGO_STACKED = "#4ade80";
+/** Cargo hues come from the batch; the pallet deck stays wood-toned. */
 const COLOR_PALLET = "#d4a373";
 const COLOR_PALLET_EDGE = "#b08968";
-const COLOR_HOVER = "#9ed843";
-const HOVER_SCALE = 1.002;
+const COLOR_SELECT = "#ffffff";
+const CARGO_OPACITY = 0.58;
+const CARGO_OPACITY_HOVER = 0.78;
+const CARGO_OPACITY_SELECTED = 0.88;
 
 function ignoreRaycast() {}
+
+/** Twelve edges of a box, as disjoint segment pairs for drei's screen-space `Line`. */
+function boxFramePoints(size: Vec3, centerY: number): [number, number, number][] {
+  const hx = size[0] / 2;
+  const hy = size[1] / 2;
+  const hz = size[2] / 2;
+  const y0 = centerY - hy;
+  const y1 = centerY + hy;
+  const corners: [number, number, number][] = [
+    [-hx, y0, -hz],
+    [hx, y0, -hz],
+    [hx, y0, hz],
+    [-hx, y0, hz],
+    [-hx, y1, -hz],
+    [hx, y1, -hz],
+    [hx, y1, hz],
+    [-hx, y1, hz],
+  ];
+  const edges: [number, number][] = [
+    [0, 1],
+    [1, 2],
+    [2, 3],
+    [3, 0],
+    [4, 5],
+    [5, 6],
+    [6, 7],
+    [7, 4],
+    [0, 4],
+    [1, 5],
+    [2, 6],
+    [3, 7],
+  ];
+  return edges.flatMap(([from, to]) => [corners[from], corners[to]]);
+}
+
+function SelectionFrame({ points }: { points: [number, number, number][] }) {
+  return (
+    <Line
+      points={points}
+      segments
+      color={COLOR_SELECT}
+      lineWidth={2.5}
+      transparent
+      opacity={1}
+      depthTest={false}
+      depthWrite={false}
+      renderOrder={999}
+      raycast={ignoreRaycast}
+    />
+  );
+}
 
 const PALETTES: Record<Theme, ScenePalette> = {
   light: {
@@ -157,9 +207,7 @@ function usableMm(mm: number): number {
 }
 
 function cargoColor(item: PlacedItem): string {
-  if (item.isOverhanging) return COLOR_CARGO_OVERHANGING;
-  if (item.y > 0) return COLOR_CARGO_STACKED;
-  return COLOR_CARGO;
+  return item.color;
 }
 
 function insetSize(size: number): number {
@@ -329,7 +377,8 @@ function PalletMesh({
   onSelect: (additive: boolean) => void;
 }) {
   const { geometry } = unit;
-  const highlighted = hovered || selected;
+  const cargoOpacity = selected ? CARGO_OPACITY_SELECTED : hovered ? CARGO_OPACITY_HOVER : CARGO_OPACITY;
+  const emissiveIntensity = selected ? 0.38 : hovered ? 0.16 : 0;
 
   const enter = (event: ThreeEvent<PointerEvent>) => {
     event.stopPropagation();
@@ -367,12 +416,12 @@ function PalletMesh({
           <boxGeometry args={geometry.cargo} />
           <meshStandardMaterial
             color={geometry.color}
-            emissive={highlighted ? COLOR_HOVER : "#000000"}
-            emissiveIntensity={highlighted ? (selected ? 0.22 : 0.16) : 0}
+            emissive={geometry.color}
+            emissiveIntensity={emissiveIntensity}
             roughness={0.45}
             metalness={0}
             transparent
-            opacity={highlighted ? 0.92 : 0.85}
+            opacity={cargoOpacity}
             depthWrite={false}
             polygonOffset
             polygonOffsetFactor={-1}
@@ -382,27 +431,13 @@ function PalletMesh({
         </mesh>
       ) : null}
 
-      {highlighted ? (
-        <mesh
-          position={[0, geometry.centerY, 0]}
-          scale={HOVER_SCALE}
-          renderOrder={20}
-        >
-          <boxGeometry args={geometry.bounds} />
-          <meshBasicMaterial
-            color={COLOR_HOVER}
-            transparent
-            opacity={selected ? 0.16 : 0.1}
-            depthTest={false}
-            depthWrite={false}
-          />
-          <Edges
-            color={COLOR_HOVER}
-            lineWidth={selected ? 2.2 : 1.4}
-            depthTest={false}
-            renderOrder={21}
-          />
-        </mesh>
+      {selected ? (
+        <>
+          <SelectionFrame points={boxFramePoints(geometry.base, geometry.baseCenterY)} />
+          {geometry.cargo[1] > 0 ? (
+            <SelectionFrame points={boxFramePoints(geometry.cargo, geometry.cargoCenterY)} />
+          ) : null}
+        </>
       ) : null}
 
       {/* Invisible hit box: one hover/click target for the pallet and its cargo. */}
@@ -972,7 +1007,7 @@ export default forwardRef<TruckCanvasHandle, TruckCanvasProps>(function TruckCan
     downloadSnapshot() {
       const gl = glRef.current;
       if (!gl) return;
-      triggerPngDownload(gl.domElement.toDataURL("image/png"), `naklad-kamion-${Date.now()}.png`);
+      triggerPngDownload(gl.domElement.toDataURL("image/png"), "naklad-vizualizace.png");
     },
   }));
 
@@ -1008,7 +1043,7 @@ export default forwardRef<TruckCanvasHandle, TruckCanvasProps>(function TruckCan
       <Canvas
         dpr={[1, 2]}
         shadows={false}
-        gl={{ antialias: true, preserveDrawingBuffer: true }}
+        gl={{ antialias: true, alpha: true, preserveDrawingBuffer: true }}
         camera={initialCamera}
         onPointerDown={(event) => {
           pointerDownRef.current = { x: event.clientX, y: event.clientY };
