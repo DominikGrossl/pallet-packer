@@ -4,6 +4,8 @@ Vizuální 3D plánovač pro skládání palet s nákladem do dodávek a náklad
 
 Napsáno v Reactu a Three.js.
 
+<img width="1432" height="1105" alt="image" src="https://github.com/user-attachments/assets/e2d97432-1904-43f4-80a2-421b231cf039" />
+
 ---
 
 *Preview: https://paketo-planovac.vercel.app*
@@ -22,5 +24,3 @@ Napsáno v Reactu a Three.js.
    ```
 
 ---
-
-<img width="1432" height="1105" alt="image" src="https://github.com/user-attachments/assets/e2d97432-1904-43f4-80a2-421b231cf039" />
