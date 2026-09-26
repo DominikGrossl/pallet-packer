@@ -9,7 +9,7 @@ Napsáno v Reactu a Three.js.
 ### Lokální spuštění
 
 1. **Příprava**  
-   Pokud ještě nemáš nainstalovaný Node.js, stáhni si verzi LTS z oficiálního webu [nodejs.org](https://nodejs.org/). Součástí instalace je rovnou i správce balíčků `npm`.
+   Pokud ještě nemáš nainstalovaný Node.js, stáhni si verzi LTS (long term support) z oficiálního webu [nodejs.org](https://nodejs.org/). Součástí instalace je rovnou i správce balíčků `npm`.
 
 2. **Otevření projektu v terminálu**  
    Stáhni si kód projektu (nebo naklonuj přes Git). Otevři terminál a ujisti se, že se nacházíš v kořenové složce projektu:
