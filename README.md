@@ -1,11 +1,20 @@
-<img width="1432" height="1105" alt="image" src="https://github.com/user-attachments/assets/47ed2dbc-d79d-415a-99c5-9b4e1fcff11c" />
-
 # Pallet Packer
 
-Vizuální 3D plánovač pro skládání palet do dodávek a nákladních aut.
+3D plánovač pro skládání palet a beden do ložného prostoru dodávky nebo náklaďáku. 
 
-### Spuštění lokálně
-```bash
-npm install
-npm run dev
-```
+Napsáno v Reactu a Three.js.
+
+---
+
+### Lokální spuštění
+
+1. **Příprava**  
+   Pokud ještě nemáš nainstalovaný Node.js, stáhni si verzi LTS z oficiálního webu [nodejs.org](https://nodejs.org/). Součástí instalace je rovnou i správce balíčků `npm`.
+
+2. **Otevření projektu v terminálu**  
+   Stáhni si kód projektu (nebo naklonuj přes Git). Otevři terminál (Příkazový řádek, PowerShell nebo terminál přímo v editoru jako Cursor / VS Code) a ujisti se, že se nacházíš v kořenové složce projektu:
+   ```bash
+   cd cesta/k/projektu/pallet-packer
+   npm install
+   npm run dev
+   ```
