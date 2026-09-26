@@ -20,3 +20,5 @@ Napsáno v Reactu a Three.js.
    npm install
    npm run dev
    ```
+
+   ---
