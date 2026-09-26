@@ -22,3 +22,5 @@ Napsáno v Reactu a Three.js.
    ```
 
 ---
+
+<img width="1432" height="1105" alt="image" src="https://github.com/user-attachments/assets/e2d97432-1904-43f4-80a2-421b231cf039" />
