@@ -6,7 +6,7 @@ Napsáno v Reactu a Three.js.
 
 ---
 
-<img width="1432" height="1105" alt="image" src="https://github.com/user-attachments/assets/e2d97432-1904-43f4-80a2-421b231cf039" />
+<img width="1445" height="1078" alt="image" src="https://github.com/user-attachments/assets/a033fea0-b390-4abd-94be-55819d4b6b8d" />
 
 ---
 
