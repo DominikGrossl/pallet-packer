@@ -638,12 +638,14 @@ function InspectorButton({
   onClick,
   disabled = false,
   active = false,
+  className,
   children,
 }: {
   label: string;
   onClick: () => void;
   disabled?: boolean;
   active?: boolean;
+  className?: string;
   children: ReactNode;
 }) {
   return (
@@ -652,16 +654,17 @@ function InspectorButton({
       onClick={onClick}
       disabled={disabled}
       className={clsx(
-        "inline-flex h-8 flex-1 items-center justify-center gap-1 rounded-lg border px-2 text-[11px] font-medium shadow-sm transition select-none",
+        "inline-flex min-h-8 w-full min-w-0 items-center justify-center gap-1 rounded-lg border px-1.5 py-1.5 text-center text-xs leading-tight font-medium shadow-sm transition select-none",
         disabled
           ? "cursor-not-allowed border-slate-200/60 bg-slate-100/80 text-slate-400 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-600"
           : active
             ? "border-[#9ed843] bg-[#9ed843]/20 text-slate-800 dark:text-slate-100"
             : "border-slate-200/80 bg-white/80 text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-200 dark:hover:bg-slate-800",
+        className,
       )}
     >
       {children}
-      {label}
+      <span className="min-w-0">{label}</span>
     </button>
   );
 }
@@ -723,7 +726,7 @@ function NudgeButton({
       onPointerUp={stopRepeat}
       onPointerLeave={stopRepeat}
       onPointerCancel={stopRepeat}
-      className="inline-flex h-8 flex-1 items-center justify-center gap-1 rounded-lg border border-slate-200/80 bg-white/80 px-2 text-[11px] font-medium text-slate-700 shadow-sm transition select-none hover:bg-white dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-200 dark:hover:bg-slate-800"
+      className="flex min-h-8 w-full min-w-0 flex-col items-center justify-center gap-0 rounded-lg border border-slate-200/80 bg-white/80 px-0.5 py-1 text-[11px] leading-none font-medium tracking-tight whitespace-nowrap text-slate-700 shadow-sm transition select-none hover:bg-white sm:flex-row sm:gap-0.5 sm:px-1 sm:py-1.5 sm:text-xs dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-200 dark:hover:bg-slate-800"
       style={{ touchAction: "none" }}
     >
       {children}
@@ -757,8 +760,8 @@ function PalletInspector({
     : `Vybráno: ${units.length} ks`;
 
   return (
-    <div className="absolute bottom-4 left-1/2 z-20 w-[min(100%-1.5rem,28rem)] -translate-x-1/2">
-      <div className="rounded-2xl border border-slate-200/60 bg-white/80 px-3 py-2.5 shadow-md backdrop-blur-md dark:border-slate-800/80 dark:bg-slate-900/80">
+    <div className="absolute right-3 bottom-3 left-3 z-20 overflow-hidden sm:right-auto sm:bottom-4 sm:left-4 sm:max-w-sm">
+      <div className="overflow-hidden rounded-2xl border border-slate-200/60 bg-white/80 px-2 py-2.5 shadow-md backdrop-blur-md sm:px-2.5 dark:border-slate-800/80 dark:bg-slate-900/80">
         <div className="mb-2 flex items-center justify-between gap-3">
           <p className="truncate text-xs font-semibold text-slate-800 dark:text-slate-100">
             {title}
@@ -767,28 +770,28 @@ function PalletInspector({
             type="button"
             aria-label="Zrušit výběr"
             onClick={onClose}
-            className="rounded-lg p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+            className="shrink-0 rounded-lg p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
           >
             <X className="h-3.5 w-3.5" />
           </button>
         </div>
 
         <div className="flex flex-col gap-1.5">
-          <div className="flex items-center gap-1.5">
+          <div className="grid w-full grid-cols-4 gap-1">
             <NudgeButton label="Vlevo" delta={{ dx: -NUDGE_STEP_MM }} onNudge={onNudge}>
-              <ChevronLeft className="h-3.5 w-3.5" />
+              <ChevronLeft className="h-3 w-3 shrink-0" />
             </NudgeButton>
             <NudgeButton label="Vpravo" delta={{ dx: NUDGE_STEP_MM }} onNudge={onNudge}>
-              <ChevronRight className="h-3.5 w-3.5" />
+              <ChevronRight className="h-3 w-3 shrink-0" />
             </NudgeButton>
             <NudgeButton label="Dopředu" delta={{ dz: -NUDGE_STEP_MM }} onNudge={onNudge}>
-              <ChevronUp className="h-3.5 w-3.5" />
+              <ChevronUp className="h-3 w-3 shrink-0" />
             </NudgeButton>
             <NudgeButton label="Dozadu" delta={{ dz: NUDGE_STEP_MM }} onNudge={onNudge}>
-              <ChevronDown className="h-3.5 w-3.5" />
+              <ChevronDown className="h-3 w-3 shrink-0" />
             </NudgeButton>
           </div>
-          <div className="flex items-center gap-1.5">
+          <div className="grid w-full grid-cols-3 gap-1.5">
             {single ? (
               <>
                 <InspectorButton
@@ -796,7 +799,7 @@ function PalletInspector({
                   active={placementMode === "floor"}
                   onClick={() => onStartPlacement("floor")}
                 >
-                  <ArrowDownToLine className="h-3.5 w-3.5" />
+                  <ArrowDownToLine className="h-3 w-3 shrink-0" />
                 </InspectorButton>
                 <InspectorButton
                   label="Do stohu"
@@ -804,12 +807,16 @@ function PalletInspector({
                   active={placementMode === "stack"}
                   onClick={() => onStartPlacement("stack")}
                 >
-                  <ArrowUpFromLine className="h-3.5 w-3.5" />
+                  <ArrowUpFromLine className="h-3 w-3 shrink-0" />
                 </InspectorButton>
               </>
             ) : null}
-            <InspectorButton label="Otočit o 90°" onClick={onRotate}>
-              <RotateCw className="h-3.5 w-3.5" />
+            <InspectorButton
+              label="Otočit o 90°"
+              className={single ? undefined : "col-span-3"}
+              onClick={onRotate}
+            >
+              <RotateCw className="h-3 w-3 shrink-0" />
             </InspectorButton>
           </div>
         </div>

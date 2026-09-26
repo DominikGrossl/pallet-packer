@@ -84,7 +84,7 @@ const panelClass =
   "rounded-lg border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/50";
 
 const addToLoadButtonClass =
-  "inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-transparent bg-slate-900 px-4 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800 md:ml-auto md:w-auto md:flex-1 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700";
+  "inline-flex h-[42px] w-full items-center justify-center gap-2 rounded-lg border border-transparent bg-slate-900 px-5 text-sm font-medium whitespace-nowrap text-white shadow-sm transition hover:bg-slate-800 sm:w-auto sm:min-w-[160px] sm:flex-1 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700";
 
 const calculateButtonClass =
   "inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#9ed843] px-4 py-2.5 text-sm font-semibold text-slate-950 shadow-sm transition-all hover:bg-[#8ec738] active:scale-[0.99] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 disabled:shadow-none disabled:hover:bg-slate-100 disabled:active:scale-100 dark:disabled:bg-slate-800/50 dark:disabled:text-slate-500 dark:disabled:hover:bg-slate-800/50";
@@ -157,6 +157,7 @@ function NumberField({
   step = 10,
   suffix = "mm",
   disabled = false,
+  inputClassName,
 }: {
   label: string;
   value: number;
@@ -165,6 +166,7 @@ function NumberField({
   step?: number;
   suffix?: string;
   disabled?: boolean;
+  inputClassName?: string;
 }) {
   // While editing, the field owns its text so it can be emptied. `null` means "mirror the prop".
   const [draft, setDraft] = useState<string | null>(null);
@@ -198,7 +200,7 @@ function NumberField({
           value={text}
           onChange={(event) => handleChange(event.target.value)}
           onBlur={handleBlur}
-          className={clsx(fieldClass(disabled), "min-w-0", suffix && "pr-10")}
+          className={clsx(fieldClass(disabled), "box-border min-w-0", suffix && "pr-10", inputClassName)}
         />
         {suffix ? (
           <span
@@ -234,7 +236,7 @@ function StackChip({
       title={label}
       onClick={() => onChange(!checked)}
       className={clsx(
-        "flex min-h-10 min-w-0 cursor-pointer items-center justify-center gap-1 rounded-lg border px-2.5 text-center text-xs leading-tight transition-colors md:h-10 md:gap-1.5 md:px-3 md:whitespace-nowrap",
+        "flex h-[42px] w-full cursor-pointer items-center justify-center gap-1.5 rounded-lg border px-3 text-center text-xs leading-tight whitespace-nowrap transition-colors sm:w-auto sm:shrink-0",
         checked
           ? "border-[#9ed843]/40 bg-[#9ed843]/15 font-medium text-[#9ed843]"
           : "border-slate-200 bg-slate-100 text-slate-500 hover:border-slate-300 dark:border-slate-700/60 dark:bg-[#1a2433] dark:text-slate-400 dark:hover:border-slate-600",
@@ -242,7 +244,7 @@ function StackChip({
       )}
     >
       {checked ? <Check className="h-3.5 w-3.5 shrink-0" strokeWidth={2.5} /> : null}
-      <span className="min-w-0 text-balance">{label}</span>
+      <span className="sm:whitespace-nowrap">{label}</span>
     </button>
   );
 }
@@ -898,9 +900,9 @@ export default function PackingDashboard() {
                   />
                 </div>
               </div>
-              <div className="mt-auto flex w-full min-w-0 flex-col gap-2.5 pt-4 md:flex-row md:items-end md:gap-2">
-                <div className="flex w-full min-w-0 flex-wrap items-end gap-2 md:w-auto md:flex-nowrap">
-                  <div className="w-24 shrink-0">
+              <div className="mt-auto flex w-full flex-col gap-2.5 pt-4 sm:flex-row sm:items-end sm:gap-3">
+                <div className="flex w-full flex-col sm:w-auto sm:shrink-0 sm:flex-row sm:items-end sm:gap-3">
+                  <div className="w-full shrink-0 sm:w-24">
                     <NumberField
                       label="Počet"
                       value={quantity}
@@ -908,11 +910,12 @@ export default function PackingDashboard() {
                       min={1}
                       step={1}
                       suffix=""
+                      inputClassName="!h-[42px]"
                     />
                   </div>
-                  <div className="flex min-w-0 flex-1 flex-nowrap items-stretch gap-2 md:flex-none">
+                  <div className="mt-2 grid w-full grid-cols-2 gap-2 sm:mt-0 sm:flex sm:w-auto sm:shrink-0 sm:gap-2">
                     <StackChip
-                      className="flex-1 md:flex-none"
+                      className="w-full sm:w-auto"
                       label="Může do stohu"
                       checked={canBeOnTop}
                       onChange={(next) => {
@@ -921,7 +924,7 @@ export default function PackingDashboard() {
                       }}
                     />
                     <StackChip
-                      className="flex-1 md:flex-none"
+                      className="w-full sm:w-auto"
                       label="Lze na ni stohovat"
                       checked={canSupportTop}
                       onChange={(next) => {
@@ -932,7 +935,7 @@ export default function PackingDashboard() {
                   </div>
                 </div>
                 <button type="button" onClick={addToLoad} className={addToLoadButtonClass}>
-                  <Plus className="h-4 w-4" />
+                  <Plus className="h-4 w-4 shrink-0" />
                   Přidat do nákladu
                 </button>
               </div>
@@ -1031,7 +1034,7 @@ export default function PackingDashboard() {
               )}
             </div>
 
-            <div className="mt-4 grid grid-cols-3 gap-2">
+            <div className="mt-4 grid grid-cols-3 gap-1.5 sm:gap-2">
               <ResultStat label="Naloženo" value={result ? String(result.placed.length) : "—"} />
               <ResultStat
                 label="Nenaloženo"
@@ -1068,8 +1071,8 @@ export default function PackingDashboard() {
             </button>
           </section>
 
-          <section className={clsx(cardClass, "flex w-full flex-col lg:col-span-7")}>
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+          <section className={clsx(cardClass, "flex w-full flex-col !p-0 lg:col-span-7")}>
+            <div className="flex flex-wrap items-center justify-between gap-2 px-4 pt-3 pb-2">
               <div className="flex items-center gap-2">
                 <ScanBox className={headingIconClass} />
                 <h2 className="text-sm font-semibold">Náhled nákladu</h2>
@@ -1085,7 +1088,7 @@ export default function PackingDashboard() {
                 </button>
               </div>
             </div>
-            <div className="h-[min(70vh,560px)] min-h-[360px] w-full">
+            <div className="h-[min(70vh,560px)] min-h-[360px] w-full px-4 pb-4">
               <TruckCanvas
                 ref={canvasRef}
                 truck={activeTruck}
@@ -1460,13 +1463,13 @@ function ResultStat({
   alert?: boolean;
 }) {
   return (
-    <div className={clsx(panelClass, "px-3 py-3")}>
-      <p className="text-[11px] font-semibold tracking-wider text-slate-400 uppercase dark:text-slate-500">
+    <div className={clsx(panelClass, "min-w-0 p-2 sm:p-3")}>
+      <p className="block w-full truncate text-[9px] font-medium tracking-tight text-slate-400 uppercase sm:text-[11px] dark:text-slate-500">
         {label}
       </p>
       <p
         className={clsx(
-          "text-xl font-bold",
+          "text-base font-bold sm:text-lg",
           alert ? "text-red-500 dark:text-red-400" : "text-slate-800 dark:text-slate-100",
         )}
       >
