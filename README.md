@@ -6,6 +6,8 @@ Napsáno v Reactu a Three.js.
 
 ---
 
+Preview: https://paketo-planovac.vercel.app
+
 ### Lokální spuštění
 
 1. **Příprava**  
