@@ -8,3 +8,4 @@ Vizuální 3D plánovač pro skládání palet do dodávek a nákladních aut.
 ```bash
 npm install
 npm run dev
+```
